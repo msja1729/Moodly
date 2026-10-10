@@ -39,6 +39,53 @@ Name: "{userstartup}\Ambient Mood"; Filename: "{app}\AmbientMood.exe"; Tasks: st
 [Run]
 Filename: "{app}\AmbientMood.exe"; Description: "Start Ambient Mood"; Flags: nowait postinstall skipifsilent
 
-[UninstallRun]
-; Stop a running copy so its files can be removed.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AmbientMood.exe"; Flags: runhidden; RunOnceId: "StopApp"
+[Code]
+// A running copy is asked to quit through a file it watches (%APPDATA%\AmbientMood\data\app.quit),
+// so it hands the songs back to Spotify's queue, deletes the session playlist and restores the
+// screen colour. Only if it hasn't exited after QuitWaitSeconds is it killed.
+const
+  QuitWaitSeconds = 40;
+
+function AppRunning(): Boolean;
+var
+  Code: Integer;
+begin
+  Result := Exec(ExpandConstant('{cmd}'),
+    '/C tasklist /FI "IMAGENAME eq AmbientMood.exe" /NH | find /I "AmbientMood.exe" >NUL',
+    '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
+end;
+
+procedure CloseRunningApp();
+var
+  QuitFile: String;
+  I, Code: Integer;
+begin
+  if not AppRunning() then
+    Exit;
+  QuitFile := ExpandConstant('{userappdata}\AmbientMood\data\app.quit');
+  ForceDirectories(ExtractFileDir(QuitFile));
+  SaveStringToFile(QuitFile, '', False);
+  for I := 1 to QuitWaitSeconds do
+  begin
+    if not AppRunning() then
+      Break;
+    Sleep(1000);
+  end;
+  if AppRunning() then
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AmbientMood.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  DeleteFile(QuitFile);
+end;
+
+// Installing over a running copy (an upgrade).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  CloseRunningApp();
+  Result := '';
+end;
+
+// Uninstalling: after the user confirmed, before any file is removed.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    CloseRunningApp();
+end;

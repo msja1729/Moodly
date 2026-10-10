@@ -135,3 +135,42 @@ def test_session_notes_shown(tray_app, tmp_config, status, words):
     (tmp_config.parent / "state.json").write_text(json.dumps(_session_state(status)), encoding="utf-8")
     tray_app.refresh()
     assert words in tray_app.panel.details.text()
+
+
+def test_quit_file_quits_the_app(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QApplication
+
+    from frontend.app import watch_quit_requests
+
+    quit_file = tmp_path / "app.quit"
+    quit_file.touch()  # stale file from a cancelled uninstall: removed, not obeyed
+    calls = []
+    monkeypatch.setattr(QApplication, "quit", lambda: calls.append(1))
+    timer = watch_quit_requests(quit_file, interval_ms=20)
+    assert not quit_file.exists()
+    qtbot.wait(100)
+    assert calls == []
+
+    quit_file.touch()
+    qtbot.waitUntil(lambda: calls == [1], timeout=2000)
+    assert not quit_file.exists()
+    timer.stop()
+
+
+def test_quit_file_closes_an_open_dialog(qtbot, tmp_path, monkeypatch):
+    # The account window runs before the main loop, where Qt 6's quit() alone does nothing.
+    from PyQt6.QtWidgets import QApplication, QDialog
+
+    from frontend.app import watch_quit_requests
+
+    monkeypatch.setattr(QApplication, "quit", lambda: None)
+    dialog = QDialog()
+    qtbot.addWidget(dialog)
+    dialog.open()  # modal
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is dialog, timeout=2000)
+    quit_file = tmp_path / "app.quit"
+    timer = watch_quit_requests(quit_file, interval_ms=20)
+    quit_file.touch()
+    qtbot.waitUntil(lambda: not dialog.isVisible(), timeout=2000)
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    timer.stop()

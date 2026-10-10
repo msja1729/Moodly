@@ -21,7 +21,7 @@ from typing import Callable
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
 from frontend.components import SidebarPanel
 from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, ensure_app_home, load_config,
@@ -265,6 +265,33 @@ class MoodTrayApp:
                                     else "Spotify: not signed in")
 
 
+def watch_quit_requests(quit_file: Path, interval_ms: int = 1000) -> QTimer:
+    """Quit normally when `quit_file` appears.
+
+    The uninstaller (and an installer upgrading a running copy) creates it, so
+    the app ends the session and restores the display instead of being killed.
+    During the account window the main loop isn't running yet, and Qt 6's
+    quit() does nothing then, so open dialogs are closed first (main() then
+    returns as if the user closed the window).
+    """
+    quit_file.unlink(missing_ok=True)  # left over from an uninstall that was cancelled
+
+    def check():
+        if quit_file.exists():
+            log.info("quit requested by %s", quit_file)
+            quit_file.unlink(missing_ok=True)
+            while (modal := QApplication.activeModalWidget()) is not None:
+                modal.reject() if isinstance(modal, QDialog) else modal.close()
+                if QApplication.activeModalWidget() is modal:
+                    break  # refused to close; don't spin
+            QApplication.quit()
+
+    timer = QTimer()
+    timer.timeout.connect(check)
+    timer.start(interval_ms)
+    return timer
+
+
 def choose_spotify_account(store=None):
     """Show the Spotify account window. Returns the chosen Account, or None if the user quit."""
     from backend.spotify.auth import AccountStore
@@ -293,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env")  # optional development overrides
+    quit_watch = watch_quit_requests(APP_HOME / "data" / "app.quit")  # noqa: F841 (kept alive)
     account = choose_spotify_account()
     if account is None:
         return 0

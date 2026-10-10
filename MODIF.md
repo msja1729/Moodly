@@ -4,6 +4,15 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 
 ---
 
+## 2026-10-10 · Uninstall/upgrade closes the app cleanly (0.1.1)
+**Why:** the uninstaller force-killed a running app, so the "Ambient Mood session" playlist stayed in Spotify and the screen could stay warm.
+
+**Changed:**
+- The tray app watches `%APPDATA%\AmbientMood\datapp.quit` and quits normally when it appears (the daemon then hands the songs back, deletes the playlist and restores the display). It also works while the account window is open: Qt 6's `quit()` does nothing before the main loop runs, so open dialogs are closed first.
+- The installer (upgrading a running copy) and the uninstaller create that file and wait up to 40 s for the app to exit; only then is it force-closed.
+
+**Tests:** 200. Installer test: install → run → uninstall took 3 s and the app exited by itself (before: 66 s, then force-killed).
+
 ## 2026-10-10 · Deployable release + development setup
 **Why:** to ship an installer other people can use, while development continues from source.
 
