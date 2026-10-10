@@ -15,7 +15,7 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 - **Packaging:** PyInstaller spec, Inno Setup installer, `packaging/build.ps1`. The song catalog is shipped in the installer.
 - **Git:** `main` (releases, tagged `vX.Y.Z`) and `dev` (work in progress).
 
-**Tests:** 198 (new: first-run copy, stop watcher, single instance, real daemon start/stop as a subprocess). The packaged exe was smoke-tested: the daemon ran a mock session and stopped cleanly; the UI opened the account window.
+**Tests:** 198, all pass; the flaky watcher test (LOG #14) is fixed (new: first-run copy, stop watcher, single instance, real daemon start/stop as a subprocess). The packaged exe was smoke-tested: the daemon ran a mock session and stopped cleanly; the UI opened the account window.
 
 ## 2026-10-08 · Fourth live run: Spotify's queue didn't show the edits
 **Seen live:** the session playlist was updated, but Spotify's upcoming songs didn't change. Spotify plays its own copy (snapshot) of a playlist taken when playback started; API edits don't reach it.

@@ -316,7 +316,8 @@ class TestDaemonSession:
                 await asyncio.sleep(0.2)
                 await asyncio.to_thread(set_target_mood, "wind_down", tmp_config)
                 for _ in range(100):
-                    if daemon.target_mood == "wind_down":
+                    # The display target is set last in apply_target: wait for it, not just the name.
+                    if daemon.target_mood == "wind_down" and daemon.display.target == 3500:
                         break
                     await asyncio.sleep(0.02)
             finally:
