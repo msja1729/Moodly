@@ -1,0 +1,126 @@
+{
+  "target_mood": "focused",
+  "target": {
+    "valence": 0.5,
+    "energy": 0.45
+  },
+  "paused": false,
+  "moods": {
+    "focused": {
+      "label": "Focused",
+      "glyph": "◎",
+      "valence": 0.5,
+      "energy": 0.45,
+      "vscode_theme": "Default Dark Modern",
+      "terminal_scheme": "Campbell",
+      "kelvin": 5500,
+      "color": "#5B8DEF"
+    },
+    "calm": {
+      "label": "Calm",
+      "glyph": "≈",
+      "valence": 0.6,
+      "energy": 0.25,
+      "vscode_theme": "Quiet Light",
+      "terminal_scheme": "One Half Light",
+      "kelvin": 4500,
+      "color": "#4FC1A6"
+    },
+    "energized": {
+      "label": "Energized",
+      "glyph": "⚡",
+      "valence": 0.8,
+      "energy": 0.85,
+      "vscode_theme": "Monokai",
+      "terminal_scheme": "Tango Dark",
+      "kelvin": 6500,
+      "color": "#F2A541"
+    },
+    "wind_down": {
+      "label": "Wind Down",
+      "glyph": "☾",
+      "valence": 0.4,
+      "energy": 0.15,
+      "vscode_theme": "Solarized Dark",
+      "terminal_scheme": "Solarized Dark",
+      "kelvin": 3500,
+      "color": "#9B7FE6"
+    }
+  },
+  "markov": {
+    "grid_size": 10,
+    "beta": 6.0,
+    "gamma": 20.0
+  },
+  "inference": {
+    "ema_alpha": 0.3,
+    "skip_weight": 0.3,
+    "skip_threshold": 0.8,
+    "poll_min_s": 30,
+    "poll_max_s": 60
+  },
+  "audio": {
+    "enabled": true,
+    "deviation_threshold": 0.2,
+    "cooldown_s": 90,
+    "recent_exclusion": 50,
+    "acousticness_weight": 0.05,
+    "dataset_penalty": 0.03,
+    "pool_size": 200,
+    "mode": "session"
+  },
+  "workspace": {
+    "enabled": true,
+    "vscode_settings": "%APPDATA%/Code/User/settings.json",
+    "terminal_settings": "%LOCALAPPDATA%/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"
+  },
+  "display": {
+    "enabled": true,
+    "step_kelvin": 100,
+    "step_interval_s": 60,
+    "min_kelvin": 3400,
+    "max_kelvin": 6500
+  },
+  "paths": {
+    "db": "data/mood.db",
+    "state": "data/state.json",
+    "tracks_csv": "data/tracks.csv",
+    "catalog_db": "data/catalog.db",
+    "session_state": "data/session.json"
+  },
+  "spotify": {
+    "client_id": "abfe577a484a483eb82e527e8f1c841d",
+    "redirect_uri": "http://127.0.0.1:8888/callback"
+  },
+  "session": {
+    "cycle_s": 90,
+    "min_cycle_gap_s": 30,
+    "handback_count": 10,
+    "window_size": 20,
+    "target_length": 15,
+    "min_length": 8,
+    "protect_head": 2,
+    "max_adds_per_cycle": 3,
+    "max_removals_per_cycle": 2,
+    "settle_radius": 0.05,
+    "search_radius": 0.08,
+    "min_candidates": 200,
+    "shortlist": 50,
+    "mmr_lambda": 0.7,
+    "remove_radius_mood": 0.35,
+    "remove_radius_target": 0.35,
+    "w_tempo": 0.15,
+    "w_key": 0.05,
+    "w_loudness": 0.05,
+    "w_feel": 0.05,
+    "w_energy_jump": 0.3,
+    "w_familiar": 0.02,
+    "w_popularity": 0.01,
+    "w_trajectory": 0.5,
+    "allow_explicit": true,
+    "insert_mode": "random",
+    "max_removals_on_retarget": 5,
+    "takeover_grace_s": 20,
+    "resync_after_edits": true
+  }
+}

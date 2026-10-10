@@ -1,0 +1,49 @@
+# LOG.md: Problems to fix
+
+Open problems and risks found so far, with status. Fixed items stay listed (with the fix) so the history is in one place. Changes themselves are recorded in `MODIF.md`; the design is in `PLAN.md`.
+
+Status: 🔴 open · 🟡 partly addressed / needs a live check · 🟢 fixed
+
+---
+
+## Open
+
+| # | Problem | Impact | Status / next step |
+|---|---|---|---|
+| 1 | **Many of the user's songs have no mood data.** On the first live run only 10 of 21 queued songs had (valence, arousal). Most are recent Telugu/Hindi film songs. They aren't in the dataset (tracks up to ~2022), and ReccoBeats doesn't have them either. | The mood is computed from fewer songs. Unknown songs can't be judged, so they are never removed. | 🔴 Options: another feature source; estimate from the song's artist/album or from neighbouring songs; or let the user rate songs. |
+| 2 | **Does deleting the playing playlist stop the music?** After both live sessions ended, playback was found paused on the same song. It's unknown whether the user paused it. | Would break "music never stops" at the end of a session. | 🟡 Live check needed: end a session with Pause nudging, without touching Spotify. If playback stops, change the ending (e.g. start the handed-back songs before deleting, or delete later). |
+| 3 | **Random insert positions slow the mood down.** As requested, new songs go at random positions in the middle so they're heard soon. In simulation the mood moves more slowly: 0.59 → 0.19 in 4 h, against 0.59 → 0.04 in 3 h with the "path" order. Inserted songs play first, so the original songs stay in the average longer. | Slower convergence. | 🟡 By design for now (`session.insert_mode = "random"`). `"path"` is available. A middle ground (random, but biased toward the front for songs near the current mood) could keep both benefits. |
+| 4 | **Convergence takes hours.** The mood is the average of about 20 queued songs, so it only moves as songs play or are removed. | A big mood change (e.g. Energized → Wind Down) takes 2–3 h even in "path" mode. | 🟡 Inherent to "mood = queue average". Faster options: a smaller window, more removals per cycle, or a recency-weighted average (`window_size`, `max_removals_per_cycle`). |
+| 5 | **Spotify development mode allows only 5 users** (allowlist), and the app owner needs Premium. Extended quota is for organizations only. | Can't distribute widely. | 🔴 Spotify policy (2025–26). Earlier docs said 25; corrected. Alternative: each user registers their own Spotify app ("bring your own Client ID"). |
+| 6 | **`/me` may no longer return `product`** (Spotify's Feb 2026 change). | The Premium check can't read the plan. | 🟡 Fallback built: "Premium not confirmed" accounts are linked, and `PREMIUM_REQUIRED` on the first playback command removes them. Not yet seen live (this app still gets `product`). |
+| 7 | **Playlist delete endpoint.** `DELETE /me/library` (the 2026 replacement) needs the `user-library-modify` scope, which the app doesn't request (403 on the live run). The classic unfollow endpoint works and is now tried first. | Apps created after Feb 2026 may not have the classic endpoint, so the playlist would stay in the library. | 🟡 Add `user-library-modify` to the scopes (users reconnect once) when needed. |
+| 8 | **Refresh tokens expire 6 months after sign-in** (Spotify 2026). | Users must reconnect every 6 months. | 🟢 Handled: the account window shows "sign-in expired" and offers Connect again. |
+| 9 | **Stopping the daemon abruptly** (killing the process) skips the session ending: no hand-back, playlist not deleted. Quitting the tray app doesn't stop the daemon (separate processes). | A playlist may be left in the library until the next session start. | 🟡 Leftovers are deleted at the next start (`data/session.json`). Use Pause nudging before stopping. Better: let the tray app stop the daemon cleanly. |
+| 10 | **The session playlist is visible** in the user's library while a session runs. | Cosmetic; the user might edit or delete it. | 🔴 Spotify has no hidden playlists. If the user deletes it mid-session the app should notice and start a new one (not handled yet). |
+| 11 | **Small libraries without the catalog** run out of songs near the target. The mood then hovers 0.1–0.2 away. | Less precise. | 🟡 Mitigated: older repeats are allowed when the catalog runs dry. Recommend `python -m backend.catalog import`. |
+| 12 | **Podcasts are left out** (user's choice). | Episodes don't count toward the mood. | 🔴 Deferred. A text-based estimate (NRC VAD lexicon on title/description) was planned and not built. |
+| 13 | **Assumptions about Spotify that the simulator encodes**, still to confirm live: (a) songs added with "Add to queue" survive the switch to the playlist and each resync; (b) ~~Spotify follows edits to the playing playlist~~: **it doesn't** (live run 4, see F13); (c) the queue endpoint lists user-queued songs before the playlist's. | Wrong ordering or duplicates in the live queue. | 🟡 (b) resolved by resyncing. (a) and (c) still need a longer live session. |
+| 16 | **A short blip at each resync.** To make Spotify see the edits, the playlist is played again from the same song and moment after each cycle that changed something (every ~90 s at most). | Possibly a fraction of a second of silence. | 🟡 Check live. If noticeable, resync only at song boundaries (right after a song change). |
+| 17 | **A removed song can still start playing** if Spotify's copy (snapshot) reaches it before the next cycle. The app then moves on to the playlist at the next poll (≤ 60 s). | Up to a minute of a removed song. | 🟡 Acceptable for now; resyncing at every song change would shorten it. |
+| 14 | **Flaky test:** `test_config_change_detected_by_watcher` fails intermittently on Windows (file-watcher timing). | Noise in test runs. | 🔴 Predates Phase 2. Make the test wait for the watcher event instead of a fixed delay. |
+| 15 | **Windows limits screen warmth** to about 3400–4000 K unless a registry value is set. | Wind Down can't get as warm as configured. | 🟢 Detected and clamped; registry fix documented in the README. |
+
+## Fixed
+
+| # | Problem | Fix |
+|---|---|---|
+| F1 | **Sessions ended a second after starting** (2nd live run). Right after hand-over Spotify still reported the old source, and the app took that for "the user started other music". It deleted the playlist and gave up; every mood change repeated it. | A 20 s grace period after hand-over. Another source must be seen on 2 cycles in a row. "No source" counts only if the song playing is unknown to the session. |
+| F2 | **Overlapping updates** (a target change and the timer at once) started two sessions, so two playlists, each seeing the other as "foreign". One playlist was left in the user's library. | Session steps are serialized with a lock. The leftover playlist was deleted. |
+| F3 | **Changing the mood didn't remove anything.** The removal rule (far from both mood and target) almost never fires right after a target change. | On a new target, up to 5 upcoming songs far from the new target are removed and replaced (`max_removals_on_retarget`). |
+| F4 | **New songs went toward the end** of the queue (path order), so they weren't heard for a long time. | Random positions in the middle (`insert_mode = "random"`, default). See open #3 for the trade-off. |
+| F5 | **Daemon crashed at startup:** the active-account cache handler didn't subclass spotipy's `CacheHandler`. | Fixed, with a test that builds the live client. |
+| F6 | **Tests broke when the user changed settings** (they copied the live config). | Tests reset the target and pause state to defaults. |
+| F7 | **The mood stalled** in simulation (new songs inserted near the front; original songs never left the window). | "Path" mode inserts in strict mood → target order. Still the case in path mode. |
+| F8 | **The playlist grew without limit.** | Once the window is full, a cycle only replaces removed songs. |
+| F9 | **User-queued songs played twice** (copied into the playlist at hand-over). | Detected by matching the whole queue overlap; the playlist copies are removed. |
+| F10 | **Same artist picked twice.** | Artists are a hard rule in MMR. |
+| F11 | **PLAN.md text garbled** (encoding). | Repaired to UTF-8. |
+| F13 | **Edits never reached Spotify's queue** (live run 4). Spotify plays its own copy of the playlist from when playback started, so API edits changed the saved playlist but not what plays next. | After each cycle that changes the playlist, it is played again from the same song at the same moment (`session.resync_after_edits`), so Spotify reloads it. The simulator now has a Spotify-like snapshot mode (`follows_playlist_edits=False`) to test this. |
+| F14 | **Music would stop with a stale snapshot** (found in simulation while fixing F13). Spotify played a song from its old copy that the app had removed. The app took it for a user-queued song, never resynced, and the old copy ran out. | The app remembers Spotify's copy (snapshot). A song in the copy but no longer in the playlist means "move on to the playlist now". |
+| F15 | **Playlist emptied itself** (simulation). When Spotify's queue didn't match the app's snapshot, playlist songs were classed as user-queued and their copies deleted as duplicates, over and over. | Spotify's queue is matched against both the snapshot and the current playlist; the explanation with the fewest user songs wins. Tests cover both Spotify behaviours. |
+| F12 | **Autoplay mistaken for the user's queue** (3rd live run). The session started with 1 song (empty queue), and Spotify filled its queue with autoplay suggestions. With nothing upcoming in the playlist to compare with, all 20 were classed as user-queued (protected), so nothing was added. The playlist ran out and autoplay took over. | With no upcoming playlist songs, Spotify's queue isn't treated as the user's. The first cycle fills the playlist. |
