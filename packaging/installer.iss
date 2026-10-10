@@ -16,6 +16,9 @@ OutputBaseFilename=AmbientMood-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Per-user by default (no admin prompt; the app keeps its data per user anyway).
+; The dialog lets someone choose "install for all users" instead.
+PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 UninstallDisplayIcon={app}\AmbientMood.exe
 ; The app keeps settings and data in %APPDATA%\AmbientMood; the uninstaller leaves them.
