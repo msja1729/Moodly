@@ -17,6 +17,11 @@ and, for the playlist session (Phase 2):
     set_shuffle(on)
     delete_playlist(id, uri)                      remove it from the user's library
 
+and, for the recommender (raw Spotify track JSON):
+    top_tracks_raw(time_range, limit)             the user's top tracks
+    search_tracks_raw(query, limit, offset)       track search (Spotify allows 10 per page)
+    track_raw(id)                                 one track
+
 Playlist calls use the `/playlists/{id}/items` endpoints and `POST /me/playlists`
 (Spotify's February 2026 API; spotipy still calls the removed `/tracks` paths).
 
@@ -258,6 +263,17 @@ class LiveSpotifyClient:
             offset += 50
         return list(tracks.values())[:limit]
 
+    # -- recommender ------------------------------------------------------------
+    def top_tracks_raw(self, time_range: str = "short_term", limit: int = 50) -> list[dict]:
+        return (self._call(self.sp.current_user_top_tracks, limit=limit, time_range=time_range) or {}).get("items", [])
+
+    def search_tracks_raw(self, query: str, limit: int = 10, offset: int = 0) -> list[dict]:
+        res = self._call(self.sp.search, q=query, type="track", limit=limit, offset=offset) or {}
+        return (res.get("tracks") or {}).get("items", [])
+
+    def track_raw(self, track_id: str) -> dict | None:
+        return self._call(self.sp.track, track_id)
+
     def audio_features(self, track_ids: list[str]) -> dict[str, Features]:
         out: dict[str, Features] = {}
         try:
@@ -451,6 +467,16 @@ class MockSpotifyClient:
 
     def library_tracks(self, limit: int = 200) -> list[Track]:
         return [t for t, _ in list(self.catalog.values())[:limit]]
+
+    # The mock has no search or top-track history; the recommender is off in mock mode.
+    def top_tracks_raw(self, time_range: str = "short_term", limit: int = 50) -> list[dict]:
+        return []
+
+    def search_tracks_raw(self, query: str, limit: int = 10, offset: int = 0) -> list[dict]:
+        return []
+
+    def track_raw(self, track_id: str) -> dict | None:
+        return None
 
     def audio_features(self, track_ids: list[str]) -> dict[str, Features]:
         if not self.features_available:

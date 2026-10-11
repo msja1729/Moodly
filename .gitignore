@@ -18,3 +18,4 @@ data/daemon.log
 data/daemon.stop
 data/app.log
 data/daemon.lock
+data/recommender.db

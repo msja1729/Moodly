@@ -43,7 +43,10 @@ class CatalogTrack:
     genre: str = ""
     popularity: int = 0
     explicit: bool = False
-    source: str = "dataset"  # "dataset" or "library" (the user's own top/saved tracks)
+    source: str = "dataset"  # "dataset", "library" (the user's own top/saved tracks) or "recommender"
+    language: str = ""       # ISO 639-1 ("te", "hi", ...); "" = unknown (the dataset has none)
+    taste: float = 0.0       # 0..1, how well it matches the user's taste (recommender)
+    fresh: float = 0.0       # 0..1, how recent the release is (recommender)
 
     @property
     def uri(self) -> str:
@@ -75,6 +78,9 @@ class TrackTable:
         self.library = np.array([t.source == "library" for t in self.tracks], dtype=bool)
         self.popularity = np.array([t.popularity / 100.0 for t in self.tracks], dtype=float)
         self.explicit = np.array([t.explicit for t in self.tracks], dtype=bool)
+        self.language = np.array([t.language for t in self.tracks], dtype=object)
+        self.taste = np.array([t.taste for t in self.tracks], dtype=float)
+        self.fresh = np.array([t.fresh for t in self.tracks], dtype=float)
 
     def __len__(self) -> int:
         return len(self.tracks)

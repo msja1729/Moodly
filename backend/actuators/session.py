@@ -10,7 +10,10 @@ that instead:
     cycle   (regularly, and on song/target changes) read the playlist and
             where playback is; mood = average point of the window (now playing
             + upcoming); plan_cycle() picks songs to insert and songs to
-            remove; apply the edits. Songs that already played this session
+            remove; apply the edits. Songs come from `table` (the recommender's
+            pool: the user's taste and top-2 `languages`) and, when it has
+            nothing suitable for this mood step, from `fallback_table` (the
+            static catalog + library, any language). Songs that already played this session
             (e.g. from Spotify's own queue) are removed from the upcoming part,
             so nothing plays twice.
     end     (pause nudging, quit, log out) the next few songs are handed back
@@ -30,7 +33,7 @@ import math
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 import numpy as np
 
@@ -64,6 +67,7 @@ class SessionParams:
     resync_after_edits: bool = True  # replay the playlist (same song, same moment) so Spotify sees the edits
     recent_exclusion: int = 50       # songs played recently are not picked again...
     replay_after: int = 10           # ...unless the catalog runs dry; then only the last 10 are excluded
+    pool_max_jump: float = 0.3       # a taste-pool song this far from the waypoint still beats the catalog
 
     @classmethod
     def from_config(cls, cfg: Mapping) -> "SessionParams":
@@ -120,6 +124,9 @@ class PlaylistSession:
                  state_file: Path | None = None):
         self.client = client
         self.table = table
+        self.fallback_table: TrackTable | None = None
+        self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
+        self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
         self.feedback = feedback
         self.clock = clock
@@ -158,6 +165,12 @@ class PlaylistSession:
     def active(self) -> bool:
         return self.playlist_id is not None
 
+    def use_tables(self, table: TrackTable, languages=None, fallback: TrackTable | None = None) -> None:
+        """Pick from `table` (in `languages`), falling back to `fallback` (set by the daemon)."""
+        self.table = table
+        self.languages = frozenset(languages) if languages else None
+        self.fallback_table = fallback
+
     def chain_for(self, target: Point) -> MoodChain:
         stats = self.feedback.skip_stats() if self.feedback else None
         return MoodChain(target, self.markov, stats)
@@ -169,6 +182,8 @@ class PlaylistSession:
             if it.kind != "track":
                 continue
             t = self.table.get(it.id)
+            if t is None and self.fallback_table is not None:
+                t = self.fallback_table.get(it.id)
             if t is not None:
                 out[it.id] = t.features
             else:
@@ -178,6 +193,9 @@ class PlaylistSession:
                 out.update(self.features.get_many(missing))
             except Exception as e:
                 log.warning("feature lookup failed: %s", e)
+        still = [i for i in missing if i not in out]
+        if still and self.on_missing_features is not None:
+            self.on_missing_features(still)
         return out
 
     def _save_state(self) -> None:
@@ -351,12 +369,22 @@ class PlaylistSession:
         chain = self.chain_for(target)
         exclude = self.removed_ids | set(self.recent)
         retarget = reason in ("start", "target_change")
-        plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget)
+        plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget,
+                          self.languages)
         if plan.waypoint is not None and self._poor(plan):
             # Small catalogs run out of unplayed songs near the target: allow older repeats.
             relaxed = self.removed_ids | set(list(self.recent)[-self.params.replay_after:])
-            retry = plan_cycle(window, self.table, target, chain, self.rng, self.selection, relaxed, retarget)
+            retry = plan_cycle(window, self.table, target, chain, self.rng, self.selection, relaxed, retarget,
+                               self.languages)
             if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
+                plan = retry
+        if (plan.waypoint is not None and self._poor(plan, self.params.pool_max_jump, average=True)
+                and self.fallback_table is not None):
+            # Not even a bigger step is in the taste pool: use the static catalog (any language).
+            retry = plan_cycle(window, self.fallback_table, target, chain, self.rng, self.selection, exclude,
+                               retarget)
+            if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
+                log.info("no suitable song in the taste pool for this step; using the catalog")
                 plan = retry
         self.mood, self.deviation = plan.mood, plan.deviation
 
@@ -441,12 +469,13 @@ class PlaylistSession:
         self.client.play_context(self.playlist_uri, cur, progress)
         self._after_resync(None, cur)
 
-    def _poor(self, plan) -> bool:
-        """Fewer picks than wanted, or picks far from the waypoint: the catalog ran dry nearby."""
+    def _poor(self, plan, far: float | None = None, average: bool = False) -> bool:
+        """No picks, or picks far from the waypoint (any of them, or on `average`): the table ran dry nearby."""
         if not plan.insertions:
             return True
-        far = 2 * self.selection.search_radius
-        return any(math.dist(t.point, plan.waypoint) > far for _, t in plan.insertions)
+        far = far or 2 * self.selection.search_radius
+        dists = [math.dist(t.point, plan.waypoint) for _, t in plan.insertions]
+        return (sum(dists) / len(dists) if average else max(dists)) > far
 
     def _emergency_fill(self, window: list[WindowItem], target: Point, exclude: set[str],
                         already: list, k: int) -> list[tuple[None, CatalogTrack]]:
@@ -455,9 +484,16 @@ class PlaylistSession:
             return []
         taken = exclude | {t.id for _, t in already} | {w.track_id for w in window if w.track_id}
         relaxed = replace(self.selection, min_candidates=max(k, 20))
-        idx, _ = rank_candidates(self.table, target, target, target, MusicalContext.of(window), taken,
-                                 relaxed, settled=True)
-        return [(None, self.table.tracks[i]) for i in idx[:k]]
+        context = MusicalContext.of(window)
+        idx, _ = rank_candidates(self.table, target, target, target, context, taken, relaxed, settled=True,
+                                 languages=self.languages)
+        picks = [self.table.tracks[i] for i in idx[:k]]
+        if len(picks) < k and self.fallback_table is not None:
+            taken |= {t.id for t in picks}
+            idx, _ = rank_candidates(self.fallback_table, target, target, target, context, taken, relaxed,
+                                     settled=True)
+            picks += [self.fallback_table.tracks[i] for i in idx[:k - len(picks)]]
+        return [(None, t) for t in picks]
 
     # ------------------------------------------------------------- song events (from polling)
     def note_started(self, track_id: str) -> None:

@@ -17,6 +17,11 @@ Audio modes (config "audio.mode"):
     "queue"   (Phase 1)           mood = moving average of played songs; one
                                   bridging song at a time is appended to
                                   Spotify's queue (actuators/audio.py)
+
+Recommender (live session mode, config "recommender"): a background thread
+refreshes a pool of songs matching the user's taste and top-2 languages
+(recommender/) at startup and every `refresh_s`; the session picks from it by
+mood and falls back to the static catalog when it has nothing suitable.
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ from backend.inference import InferenceEngine, InferenceParams, PollResult, Trac
 from backend.mood_space import MarkovParams, Point, distance
 from backend.selection import SelectionParams
 from backend.spotify.client import RateLimited
+from recommender import Recommender, RecommenderParams
 from shared.config_io import (DEFAULT_CONFIG_PATH, PROJECT_ROOT, atomic_write_json, ensure_app_home,
                               load_config, resolve_path, target_point)
 
@@ -55,7 +61,8 @@ class Daemon:
     def __init__(self, config_path: Path, cfg: dict[str, Any], client, features: FeatureChain,
                  feedback: FeedbackLog, pool: CandidatePool, clock, display_backend=None,
                  workspace: WorkspaceActuator | None = None, state_path: Path | None = None,
-                 rng: np.random.Generator | None = None, session: PlaylistSession | None = None):
+                 rng: np.random.Generator | None = None, session: PlaylistSession | None = None,
+                 recommender=None):
         self.config_path = Path(config_path)
         self.cfg = cfg
         self.client = client
@@ -85,6 +92,14 @@ class Daemon:
         self._reload_handle: asyncio.TimerHandle | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._tasks: set[asyncio.Task] = set()
+        # The recommender's song pool (live mode only).
+        self.recommender = recommender
+        self._catalog_table = session.table if session is not None else None  # fallback for the pool
+        self._rec_thread: threading.Thread | None = None
+        self._rec_ready = False
+        self._next_rec = self.clock.now()
+        if recommender is not None and session is not None:
+            session.on_missing_features = recommender.want_features
 
     # ------------------------------------------------------------- target mood
     async def apply_target(self, reason: str) -> None:
@@ -207,6 +222,37 @@ class Daemon:
         if inj:
             self.last_bridge = f"{inj.candidate.artists} - {inj.candidate.name}"
 
+    # ------------------------------------------------------------- recommender
+    def _start_rec_refresh(self) -> None:
+        """Refresh the song pool in a background thread (it takes a minute or two; playback goes on)."""
+        if self.recommender is None or (self._rec_thread is not None and self._rec_thread.is_alive()):
+            return
+
+        def run():
+            try:
+                self.recommender.refresh()
+                self._rec_ready = True
+            except RateLimited:
+                log.warning("recommender: Spotify rate limit; next refresh in %.0fs", self.recommender.params.refresh_s)
+            except Exception as e:
+                log.warning("recommender refresh failed: %s", e)
+
+        self._rec_thread = threading.Thread(target=run, name="recommender", daemon=True)
+        self._rec_thread.start()
+
+    def _apply_rec(self) -> None:
+        """Hand a finished pool to the session (a small pool keeps the static catalog in charge)."""
+        if not self._rec_ready or self.session is None:
+            return
+        self._rec_ready = False
+        pool = self.recommender.table()
+        if len(pool) >= self.recommender.params.min_pool:
+            self.session.use_tables(pool, self.recommender.languages, self._catalog_table)
+            log.info("session now picks from %d songs matching your taste (%s)", len(pool),
+                     ", ".join(self.recommender.language_names()))
+        else:
+            self.session.use_tables(self._catalog_table)
+
     # ------------------------------------------------------------- state for the UI
     def state(self) -> dict[str, Any]:
         mood = self.mood
@@ -232,6 +278,11 @@ class Daemon:
                 "last_added": self.session.last_added,
                 "last_removed": self.session.last_removed,
             },
+            "recommender": None if self.recommender is None else {
+                "status": self.recommender.status,
+                "languages": self.recommender.language_names(),
+                "pool": len(self.recommender.table()),
+            },
         }
 
     def write_state(self) -> None:
@@ -249,6 +300,11 @@ class Daemon:
         next_display = self.clock.now()
         while end is None or self.clock.now() < end:
             now = self.clock.now()
+            if self.recommender is not None:
+                if now >= self._next_rec:
+                    self._start_rec_refresh()
+                    self._next_rec = now + self.recommender.params.refresh_s
+                self._apply_rec()
             if now >= next_poll:
                 result = await self.inference.poll()
                 await self.handle_poll(result)
@@ -263,6 +319,8 @@ class Daemon:
                     self.write_state()
                 next_display = self.clock.now() + self.display.params.step_interval_s
             due = [next_poll, next_display]
+            if self.recommender is not None:
+                due.append(self._next_rec)
             if self.session is not None and not self.paused:
                 due.append(self._next_cycle)
             if end is not None:
@@ -300,6 +358,8 @@ class Daemon:
         task.add_done_callback(self._tasks.discard)
 
     def shutdown(self) -> None:
+        if self.recommender is not None:
+            self.recommender.stop.set()
         if self._observer:
             self._observer.stop()
             self._observer.join(timeout=2)
@@ -367,13 +427,19 @@ def build_daemon(args: argparse.Namespace) -> Daemon:
                                   SelectionParams.from_config(cfg), SessionParams.from_config(cfg),
                                   MarkovParams.from_config(cfg), np.random.default_rng(args.seed),
                                   state_file=session_state)
+    recommender = None
+    rec_params = RecommenderParams.from_config(cfg)
+    if session is not None and not args.mock and rec_params.enabled:
+        recommender = Recommender.build(client, [ReccoBeatsProvider(), dataset], chain.cache,
+                                        resolve_path(paths.get("recommender_db", "data/recommender.db")),
+                                        rec_params, feedback)
     backend = NullBackend() if args.no_display else default_backend()
     workspace = None
     if args.mock and not args.real_workspace:
         workspace = WorkspaceActuator(mock_workspace_config(cfg))
     daemon = Daemon(config_path, cfg, client, chain, feedback, pool, clock,
                     display_backend=backend, workspace=workspace, state_path=state_path,
-                    rng=np.random.default_rng(args.seed), session=session)
+                    rng=np.random.default_rng(args.seed), session=session, recommender=recommender)
     if not args.mock:
         def forget_account():
             log.error("Spotify says %s doesn't have Premium; this account was removed", account.display_name)

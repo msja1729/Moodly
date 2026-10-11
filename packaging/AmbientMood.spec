@@ -13,7 +13,7 @@ a = Analysis(
         (str(ROOT / "config" / "config.json"), "config"),  # default settings, copied to %APPDATA% on first run
         (str(ROOT / "data" / "catalog.db"), "data"),       # the song catalog
     ],
-    hiddenimports=collect_submodules("backend") + collect_submodules("frontend")
+    hiddenimports=collect_submodules("backend") + collect_submodules("frontend") + collect_submodules("recommender")
     + collect_submodules("watchdog.observers"),
     excludes=["pytest", "pytestqt", "tkinter"],
 )

@@ -6,10 +6,13 @@ The listening window is the song now playing plus the upcoming songs:
 
     mood m       = mean (valence, arousal) of the window's songs           (queue_mood)
     waypoint w   = one Markov-chain step from m toward the target t        (mood_space)
-    candidates   = catalog songs near w, closer to t than m                (rank_candidates)
+    candidates   = songs near w, closer to t than m                       (rank_candidates)
+                   (from the recommender's pool: the user's taste and top-2
+                   languages; or the static catalog as a fallback)
                    ranked by distance to w + musical fit with the window:
                    tempo (half/double time aware), Camelot key, loudness,
-                   danceability/acousticness, + familiarity/popularity bonus
+                   danceability/acousticness, - taste - freshness bonus
+                   (- familiarity/popularity bonus)
     picks        = a varied subset of the best (Maximal Marginal Relevance) (mmr_select)
     positions    = "random" (default): random positions in the middle of the
                    upcoming songs, so new songs are heard soon             (random_positions)
@@ -56,6 +59,8 @@ class SelectionParams:
     w_energy_jump: float = 0.3        # transition cost only: arousal jump between neighbours
     w_familiar: float = 0.02
     w_popularity: float = 0.01
+    w_taste: float = 0.12             # recommender taste score (0..1): favourite artists > related artists
+    w_fresh: float = 0.03             # recommender freshness (0..1): released in the last year
     w_trajectory: float = 0.5         # insertion ("path" mode): keep the m -> t order
     allow_explicit: bool = True
     insert_mode: str = "random"       # "random": random positions in the middle; "path": m -> t order + cheapest gap
@@ -187,8 +192,11 @@ class MusicalContext:
 
 def rank_candidates(table: TrackTable, waypoint: Point, mood: Point, target: Point,
                     context: MusicalContext, exclude_ids: set[str], params: SelectionParams,
-                    settled: bool = False) -> tuple[np.ndarray, np.ndarray]:
-    """Shortlist of (indices, scores) into `table`, best (lowest score) first."""
+                    settled: bool = False, languages: frozenset[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Shortlist of (indices, scores) into `table`, best (lowest score) first.
+
+    `languages`: only songs in these languages (the user's top 2), if given.
+    """
     if not len(table):
         return np.array([], dtype=int), np.array([])
     mask = np.ones(len(table), dtype=bool)
@@ -200,6 +208,8 @@ def rank_candidates(table: TrackTable, waypoint: Point, mood: Point, target: Poi
         mask[excluded] = False
     if not params.allow_explicit:
         mask &= ~table.explicit
+    if languages:
+        mask &= np.isin(table.language, list(languages))
     idx = table.radius_search(waypoint, params.search_radius, mask, params.min_candidates)
     if not len(idx):
         return idx, np.array([])
@@ -218,7 +228,8 @@ def rank_candidates(table: TrackTable, waypoint: Point, mood: Point, target: Poi
 
     score = (d_w + params.w_tempo * d_tempo + params.w_key * d_key + params.w_loudness * d_loud
              + params.w_feel * d_feel - params.w_familiar * table.library[idx]
-             - params.w_popularity * table.popularity[idx])
+             - params.w_popularity * table.popularity[idx]
+             - params.w_taste * table.taste[idx] - params.w_fresh * table.fresh[idx])
     order = np.argsort(score, kind="stable")[: params.shortlist]
     return idx[order], score[order]
 
@@ -387,7 +398,7 @@ class CyclePlan:
 
 def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, chain: MoodChain,
                rng: np.random.Generator, params: SelectionParams, exclude_ids: set[str],
-               retarget: bool = False) -> CyclePlan:
+               retarget: bool = False, languages: frozenset[str] | None = None) -> CyclePlan:
     """Decide one reshaping step for the window (now playing first).
 
     `retarget`: the user just picked a new target, so songs far from it are cleared out.
@@ -425,7 +436,7 @@ def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, ch
     context = MusicalContext.of(kept)
     window_ids = {it.track_id for it in items if it.track_id}
     idx, scores = rank_candidates(table, plan.waypoint, mood, target, context, exclude_ids | window_ids,
-                                  params, settled)
+                                  params, settled, languages)
     # Don't repeat the artists of the songs right around the insertion area.
     window_artists = {main_artist(it.artists) for it in kept[1: params.protect_head + 4] if it.artists}
     picks = mmr_select(table, idx, scores, k, params.mmr_lambda, window_artists)

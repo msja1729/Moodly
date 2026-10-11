@@ -86,7 +86,8 @@
     "state": "data/state.json",
     "tracks_csv": "data/tracks.csv",
     "catalog_db": "data/catalog.db",
-    "session_state": "data/session.json"
+    "session_state": "data/session.json",
+    "recommender_db": "data/recommender.db"
   },
   "spotify": {
     "client_id": "abfe577a484a483eb82e527e8f1c841d",
@@ -121,6 +122,29 @@
     "insert_mode": "random",
     "max_removals_on_retarget": 5,
     "takeover_grace_s": 20,
-    "resync_after_edits": true
+    "resync_after_edits": true,
+    "w_taste": 0.12,
+    "w_fresh": 0.03,
+    "pool_max_jump": 0.3
+  },
+  "recommender": {
+    "enabled": true,
+    "languages": "auto",
+    "max_languages": 2,
+    "min_language_share": 0.15,
+    "refresh_s": 1800,
+    "profile_ttl_s": 21600,
+    "recent_days": 14,
+    "favorite_artists": 12,
+    "related_from": 6,
+    "related_per_artist": 6,
+    "artists_per_refresh": 8,
+    "search_ttl_days": 3,
+    "search_pages": 2,
+    "lyrics_budget": 40,
+    "preview_budget": 20,
+    "fresh_days": 365,
+    "country": "IN",
+    "min_pool": 30
   }
 }

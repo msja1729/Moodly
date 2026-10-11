@@ -58,6 +58,12 @@ frontend/            the tray app (PyQt6)
   components.py      sidebar widgets (mood tiles, mood map, account + Log out)
   onboarding.py      Spotify account window (choose / connect / Premium check)
   daemon_process.py  starts, restarts and cleanly stops the daemon process
+recommender/         song recommender (Phase 3): taste + top-2 languages + mood features, live
+  engine.py          background refresh -> song pool
+  profile.py         favourite artists, top-2 languages, freshness
+  language.py        a song's language (markers, script, lyrics)
+  sources.py         Spotify, Deezer, LRCLIB, iTunes, ReccoBeats
+  store.py           SQLite cache (data/recommender.db)
 shared/
   config_io.py       atomic config reads/writes used by both processes; where files live
 data/                runtime files (git-ignored): mood.db, state.json, spotify_accounts/, daemon.log, ...
@@ -163,6 +169,9 @@ git switch dev
 The installer step needs Inno Setup 6 (`winget install JRSoftware.InnoSetup`); without it `build.ps1` builds only the `dist\AmbientMood\` folder.
 
 **Spotify limit for other users:** the Spotify app behind `spotify.client_id` is in Spotify's *Development mode*, which only lets in the Spotify accounts you add under *User Management* in the [developer dashboard](https://developer.spotify.com/dashboard). Add each user's Spotify email there before they sign in. Opening the app to everyone needs Spotify's extended-quota approval; check Spotify's current rules first.
+
+## Song recommendation
+New songs come from a live **taste pool**: songs by the user's favourite artists and their related artists (Deezer), in the user's **top-2 languages** (from their recent Spotify listening), with mood features. New releases are included. The daemon refreshes it in the background at start and every 30 minutes; it grows with each refresh and is cached in `data/recommender.db`. Until it has 30 songs, or when it has nothing near the next mood step, the static catalog is used. Settings: `recommender` in `config/config.json` (e.g. `"languages": ["te", "hi"]` to fix the languages). Details: `SPEC.md.md` → "Song Recommendation (Phase 3)".
 
 ## Tuning (`config/config.json`)
 - `moods.*`: coordinates, VS Code theme, Terminal scheme and Kelvin for each mood.
