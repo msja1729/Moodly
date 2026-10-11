@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -315,15 +316,32 @@ class ThemeTarget:
     mood_key: str  # which field of the mood definition holds the value
 
 
+# Where VS Code keeps its user settings when the configured (Windows) path doesn't apply.
+VSCODE_SETTINGS_ELSEWHERE = {
+    "darwin": "~/Library/Application Support/Code/User/settings.json",
+    "linux": "~/.config/Code/User/settings.json",
+}
+
+
+def platform_path(raw: str, platform: str = sys.platform) -> str:
+    """A Windows-only setting (%APPDATA%/%LOCALAPPDATA%) on macOS/Linux -> the usual place there, if known."""
+    if platform == "win32" or "%" not in raw:
+        return raw
+    if raw.replace("\\", "/").endswith("Code/User/settings.json"):
+        key = "darwin" if platform == "darwin" else "linux"
+        return VSCODE_SETTINGS_ELSEWHERE[key]
+    return ""  # e.g. Windows Terminal: not on this platform
+
+
 class WorkspaceActuator:
     def __init__(self, cfg: Mapping):
         ws = cfg.get("workspace", {})
         self.enabled = bool(ws.get("enabled", True))
         self.targets: list[ThemeTarget] = []
-        if ws.get("vscode_settings"):
-            self.targets.append(ThemeTarget("vscode", resolve_path(ws["vscode_settings"]),
+        if vscode := platform_path(ws.get("vscode_settings") or ""):
+            self.targets.append(ThemeTarget("vscode", resolve_path(vscode),
                                             ("workbench.colorTheme",), "vscode_theme"))
-        if ws.get("terminal_settings"):
+        if ws.get("terminal_settings") and platform_path(ws["terminal_settings"]):
             self.targets.append(ThemeTarget("terminal", resolve_path(ws["terminal_settings"]),
                                             ("profiles", "defaults", "colorScheme"), "terminal_scheme"))
         self._backed_up: set[Path] = set()

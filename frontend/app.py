@@ -107,7 +107,9 @@ class GlassWindow(QWidget):
         if screen is None:
             return
         g = screen.availableGeometry()
-        self.move(g.right() - self.width() - 12, g.bottom() - self.height() - 12)
+        # Next to the tray icon: the taskbar (bottom) on Windows, the menu bar (top) on macOS.
+        y = g.top() + 12 if sys.platform == "darwin" else g.bottom() - self.height() - 12
+        self.move(g.right() - self.width() - 12, y)
 
 
 def mood_icon(color: str) -> QIcon:

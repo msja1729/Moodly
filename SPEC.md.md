@@ -68,6 +68,11 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 
 ## Constraints
 *   **Language & Runtime:** Python 3.10+ running locally. The backend must run as a non-blocking daemon.
+*   **Platforms and installers:**
+    *   **Windows 10/11:** `AmbientMood-Setup-<version>.exe` (Inno Setup, per-user install). User data in `%APPDATA%\AmbientMood`.
+    *   **macOS:** `AmbientMood-<version>-mac-arm64.dmg` (Apple silicon) and `-mac-x86_64.dmg` (Intel). Built on GitHub's Mac runners (`.github/workflows/release-mac.yml`); a menu-bar app; user data in `~/Library/Application Support/AmbientMood`.
+    *   On macOS the VS Code theme uses the Mac settings path, Windows Terminal themes are skipped, and screen warmth is not available (Windows/Linux only).
+    *   Mac builds are not signed with an Apple Developer ID, so users allow the app once in System Settings → Privacy & Security.
 *   **Security:** No client secret is shipped or required (PKCE). The public Spotify Client ID lives in `config/config.json`. Each user's tokens are stored only on their own machine in `data/spotify_accounts/` (one token file per linked account plus `index.json`; git-ignored) and are written **only for Premium accounts**. Log out deletes the active account's token. Any optional development overrides go in `.env`, separate from `config.json`.
 *   **APIs & Integrations:**
     *   Live Spotify Web API (Premium required) for track polling and queue modification. Required scopes: `user-read-currently-playing`, `user-read-playback-state`, `user-modify-playback-state`, `user-library-read`, `user-top-read`, `user-read-private`.
@@ -151,7 +156,8 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   `recommender/language.py` (Phase 3: a song's language from markers, script, lyrics)
 *   `recommender/sources.py` (Phase 3: Spotify search/top tracks, Deezer, LRCLIB, iTunes, ReccoBeats analysis)
 *   `recommender/store.py` (Phase 3: SQLite cache, `data/recommender.db`)
-*   `frontend/daemon_process.py`, `launcher.py`, `packaging/` (Release: the tray app runs the daemon; Windows installer)
+*   `frontend/daemon_process.py`, `launcher.py`, `packaging/` (Release: the tray app runs the daemon; Windows installer `build.ps1` + `installer.iss`; macOS `build_mac.sh`; shared PyInstaller spec)
+*   `.github/workflows/release-mac.yml` (Builds the macOS `.dmg` files and attaches them to a GitHub release)
 *   `shared/config_io.py` (Atomic JSON config reads/writes)
 *   `config/config.json` (Mapping definitions for target moods, coordinates; the public Spotify Client ID and redirect URI)
 *   `.env` (Optional development overrides; no secrets required)

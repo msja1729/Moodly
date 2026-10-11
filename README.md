@@ -163,10 +163,13 @@ git merge dev                                   # bring in the tested work
 git tag v1.1.0
 git push origin main --tags
 gh release create v1.1.0 dist\AmbientMood-Setup-1.1.0.exe --title "Ambient Mood 1.1.0" --notes "What changed"
+# -> the Mac workflow adds the .dmg files to this release
 git switch dev
 ```
 
 The installer step needs Inno Setup 6 (`winget install JRSoftware.InnoSetup`); without it `build.ps1` builds only the `dist\AmbientMood\` folder.
+
+**Mac installers** can't be built on Windows. Publishing the GitHub release starts `.github/workflows/release-mac.yml`, which builds `AmbientMood-<version>-mac-arm64.dmg` (Apple silicon) and `-mac-x86_64.dmg` (Intel) on GitHub's Mac machines and attaches them to the release (about 10–15 minutes). It can also be started by hand: Actions → "macOS release build" → Run workflow. On a Mac you can build locally with `bash packaging/build_mac.sh 1.1.0`. The app isn't signed with an Apple Developer ID, so on first launch macOS asks to allow it (System Settings → Privacy & Security → Open Anyway). On a Mac, screen warmth isn't available yet and the Windows Terminal theme doesn't apply.
 
 **Spotify limit for other users:** the Spotify app behind `spotify.client_id` is in Spotify's *Development mode*, which only lets in the Spotify accounts you add under *User Management* in the [developer dashboard](https://developer.spotify.com/dashboard). Add each user's Spotify email there before they sign in. Opening the app to everyone needs Spotify's extended-quota approval; check Spotify's current rules first.
 

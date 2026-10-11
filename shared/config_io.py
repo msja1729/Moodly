@@ -7,9 +7,10 @@ therefore only ever sees the old or the new file, never a half-written one.
 Where files live:
     BUNDLE_ROOT  the files shipped with the app (default config.json, catalog.db):
                  the project folder, or PyInstaller's unpacked bundle when frozen
-    APP_HOME     the user's config/ and data/: the project folder in development,
-                 %APPDATA%/AmbientMood in the installed app (Program Files is
-                 read-only). AMBIENT_MOOD_HOME overrides both.
+    APP_HOME     the user's config/ and data/: the project folder in development;
+                 in the installed app %APPDATA%/AmbientMood on Windows (Program
+                 Files is read-only), ~/Library/Application Support/AmbientMood
+                 on macOS. AMBIENT_MOOD_HOME overrides both.
 """
 from __future__ import annotations
 
@@ -31,6 +32,8 @@ def _app_home() -> Path:
     if os.environ.get("AMBIENT_MOOD_HOME"):
         return Path(os.environ["AMBIENT_MOOD_HOME"]).expanduser()
     if FROZEN:
+        if sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "AmbientMood"
         return Path(os.environ.get("APPDATA") or Path.home()) / "AmbientMood"
     return PROJECT_ROOT
 
@@ -95,7 +98,7 @@ def load_config(path: Path | str = DEFAULT_CONFIG_PATH, retries: int = 5) -> dic
     path = Path(path)
     for attempt in range(retries):
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(path, encoding="utf-8-sig") as f:  # -sig: also accept a BOM (some Windows editors add one)
                 cfg = json.load(f)
             break
         except (PermissionError, json.JSONDecodeError):

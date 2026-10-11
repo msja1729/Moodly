@@ -78,3 +78,10 @@ def test_only_one_live_daemon(tmp_path):
     again = acquire_single_instance(tmp_path / "daemon.lock")
     assert again is not None
     again.close()
+
+
+def test_config_with_a_byte_order_mark_loads(tmp_config):
+    from shared.config_io import load_config
+
+    tmp_config.write_bytes(b"\xef\xbb\xbf" + tmp_config.read_bytes())
+    assert load_config(tmp_config)["target_mood"] == "focused"

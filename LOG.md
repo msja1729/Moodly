@@ -29,6 +29,9 @@ Status: 🔴 open · 🟡 partly addressed / needs a live check · 🟢 fixed
 | 19 | **Language is unknown for some songs** (live: ~25% after 3 refreshes). Spotify gives no language or genres; titles are romanized; LRCLIB has no lyrics for some songs. | Unknown-language songs are left out of the pool, so it grows slower. | 🟡 Marker → script → lyrics → romanized words → artist majority. Multi-language composers (A.R. Rahman, Anirudh) can't use the artist fallback. |
 | 20 | **Free third-party services** (Deezer, LRCLIB, iTunes Search, ReccoBeats) may rate-limit, change or disappear. iTunes allows ~20 searches/min. | The pool stops growing. | 🟡 Everything is cached; failures are skipped; the pool persists across restarts; the static catalog remains the fallback. |
 | 21 | **Dubbed film songs**: LRCLIB may return lyrics of another language version (KGF 2 Telugu → Tamil lyrics). | Wrong language. | 🟡 Album/title markers (`[TELUGU]`, `- Telugu`) override lyrics. Without a marker the wrong version can win. |
+| 22 | **The Mac app is untested on a real Mac.** Only GitHub's Mac build and its smoke test (packaged daemon, mock session) run. | Tray/menu-bar behaviour, Spotify sign-in and the sidebar on macOS are unverified. | 🔴 Try the .dmg on a Mac. |
+| 23 | **The Mac app isn't signed or notarized** (needs an Apple Developer ID, $99/year). | macOS blocks the first launch until the user allows it in System Settings → Privacy & Security. | 🟡 Explained in the release notes. |
+| 24 | **No screen warmth on Mac** (only Windows gamma ramps and Linux xrandr exist). | The display part of a mood does nothing on a Mac. | 🔴 Possible later via CoreGraphics `CGSetDisplayTransferByFormula`. |
 | 15 | **Windows limits screen warmth** to about 3400–4000 K unless a registry value is set. | Wind Down can't get as warm as configured. | 🟢 Detected and clamped; registry fix documented in the README. |
 
 ## Fixed

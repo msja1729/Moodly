@@ -382,3 +382,15 @@ class TestDisplay:
         results = [act.step() for _ in range(6)]
         assert act.current == 5000 and act.floor == 5000
         assert results[-1] is None
+
+
+def test_workspace_paths_on_other_platforms():
+    from backend.actuators.workspace import platform_path
+
+    vscode = "%APPDATA%/Code/User/settings.json"
+    terminal = "%LOCALAPPDATA%/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json"
+    assert platform_path(vscode, "win32") == vscode
+    assert platform_path(vscode, "darwin") == "~/Library/Application Support/Code/User/settings.json"
+    assert platform_path(vscode, "linux") == "~/.config/Code/User/settings.json"
+    assert platform_path(terminal, "darwin") == ""          # no Windows Terminal on a Mac
+    assert platform_path("/custom/settings.json", "darwin") == "/custom/settings.json"
