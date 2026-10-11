@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M14 · Song recommender: taste + mood + top-2 languages (at the end, after the summary).
+**Latest:** M15 · Session buttons and a song pool prepared per session (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M13)
+## Summary of earlier modifications (M1–M14)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -23,38 +23,51 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M11 | 10-08 | **Fourth live run: edits not reaching Spotify's queue** | Spotify plays a snapshot of the playlist. | Resync after edits (same song, same moment); stale-snapshot songs skipped; user-queued songs matched against both copies. |
 | M12 | 10-10 | **Deployable release + development setup** | Users can't run two terminals; Program Files is read-only; catalog needed a command. | The tray app runs the daemon; single instance; `%APPDATA%\AmbientMood` for user data; PyInstaller + Inno Setup installer; `main`/`dev` branches; flaky watcher test fixed. |
 | M13 | 10-10 | **Uninstall/upgrade closes the app cleanly (0.1.1)** | The uninstaller force-killed the app, leaving the session playlist and a warm screen. | The app quits normally when `%APPDATA%\AmbientMood\data\app.quit` appears (also on the account window); the (un)installer creates it and waits up to 40 s. |
+| M14 | 10-11 | **Song recommender: taste + mood + top-2 languages** | Songs came from a 2022 dataset by mood only: not the user's taste or languages, no new releases. | New `recommender/` package. Taste profile (Spotify top tracks + Moodly plays/skips); top-2 languages; songs of favourite + Deezer-related artists via Spotify search (incl. the last two years); language from marker → script → LRCLIB lyrics → romanized words → artist; mood features via ReccoBeats or an iTunes preview analysed by ReccoBeats; selection adds a language filter and `− 0.12·taste − 0.03·freshness`. Live: Telugu 52%, Hindi 33%; pool 36 → 66 → 86 songs. 218 tests. |
 
 ---
 
-## M14 · Song recommender: taste + mood + top-2 languages · 2026-10-11 · `🆕 LATEST`
+## M15 · Session buttons and a song pool prepared per session · 2026-10-11 · `🆕 LATEST`
 
-**Problem:** songs were picked from a static 2022 dataset by mood alone, so they matched the mood step but not the user's taste or languages, and no new releases were included.
-
-**Findings (tested live on the user's account) that decided the design:**
-- Spotify (Feb 2026) returns **no artist genres**, no popularity, no new-releases / artist-top-tracks endpoints, and 10 search results per page.
-- **ReccoBeats recommendations don't fit:** it knew 10 of the user's top 25 songs (almost no Telugu ones), and its results ignore language (Hindi seed → English and Portuguese songs). Not used.
-- **Deezer related artists** match taste well (Sid Sriram → Devi Sri Prasad, Harris Jayaraj; Atif Aslam → Pritam, Arijit Singh).
-- **LRCLIB lyrics** were found for 10 of 12 songs, mostly in native script, which makes language detection reliable.
-- **iTunes previews + ReccoBeats audio analysis** give mood features for songs ReccoBeats doesn't know (*Maate Vinadhuga* → valence 0.28, energy 0.29).
+**Problem:**
+1. Before the pool was ready (~1.5 min after start), songs came from the static catalog: any language, not the user's taste.
+2. When the pool had nothing near a mood step, a catalog song was used for that step.
+3. Sessions started on their own; there was no explicit start/end, and the pool stayed on disk between sessions.
 
 **Modifications:**
-1. **New package `recommender/`** (self-contained, so it can move to its own repository):
-   - `profile.py`: taste profile from Spotify top tracks (4 weeks, 6 months) plus Moodly's plays and skips (14 days). It gives favourite artists and language shares. **Top-2 languages:** the second counts only with ≥ 15% share.
-   - `language.py`: a song's language, decided in this order: title/album marker, native script, lyrics script, romanized lyric words, then the artist's usual language.
-   - `sources.py`: Spotify (top tracks, search, track), Deezer (related artists), LRCLIB (lyrics), iTunes (preview matching), ReccoBeats (audio analysis), and `PreviewFeatureProvider`. Every call has a timeout and per-host spacing.
-   - `store.py`: SQLite cache `data/recommender.db` (songs, languages, artists, profile).
-   - `engine.py`: `Recommender.refresh()` runs profile → artists (favourites + related) → Spotify search (2 pages + last two years per artist) → languages → features → **pool** (top-2 languages, taste ≥ 0.05, features, one copy per song). It computes taste (favourite > related, language share, skip penalty) and freshness (1 → 0 over a year). Work per refresh is bounded, and it stops early on shutdown.
-2. **Selection** (`backend/selection.py`): a language filter, plus the score terms `− w_taste·taste − w_fresh·fresh` (0.12, 0.03).
-3. **Session** (`backend/actuators/session.py`): it picks from the pool, in the top-2 languages. If the pool has nothing near the step, it first accepts a bigger step from the pool (average ≤ `pool_max_jump` 0.3), then falls back to the static catalog. Queue songs without features are passed to the recommender for analysis. Features of queue songs are also looked up in the catalog table.
-4. **Daemon** (`backend/daemon.py`): builds the recommender in live mode and refreshes it in a background thread at start and every 30 min. It hands the pool to the session once the pool has ≥ 30 songs, adds `recommender` (status, languages, pool size) to `state.json`, and stops the refresh on shutdown.
-5. **Catalog types** (`backend/catalog.py`): `CatalogTrack` / `TrackTable` gained `language`, `taste`, `fresh`.
-6. **Spotify client** (`backend/spotify/client.py`): `top_tracks_raw`, `search_tracks_raw`, `track_raw` (live + mock). No new scope.
-7. **Config** (`config/config.json`): new `recommender` section, `session.w_taste`, `session.w_fresh`, `session.pool_max_jump`, `paths.recommender_db`.
+1. **Session buttons** (`frontend/components.py`, `frontend/app.py`, `shared/config_io.py`):
+   - At launch no session runs (`paused` set to true), and the sidebar shows **Start session**.
+   - During a session the sidebar shows **End session** and **New session**; these replace "Pause nudging".
+   - New session = `start_new_session()`: `paused = false`, `session_seq + 1`.
+   - Status line: "No session - click Start session", "Preparing songs for you in Telugu, Hindi (7/15 ready) - nothing is added until then".
+2. **Preparing phase** (`backend/daemon.py`, `backend/actuators/session.py`):
+   - On Start session, New session and every target change, the session sets `preparing`.
+   - While preparing, cycles only measure the mood: no adds, no removals.
+   - Pool refreshes run back to back until `ready_songs` (15) useful songs exist, or `prepare_max_s` (600 s) has passed. Then a "ready" cycle starts adding, with the usual clearing of songs far from the target.
+   - Exception: songs are added if fewer than `prepare_min_upcoming` (2) remain ahead, so the music never stops.
+3. **Pool aimed at the goal** (`recommender/engine.py`):
+   - `set_goal(target, mood)`.
+   - Only **useful** songs are kept: closer to the target than the mood, or within 0.15 of the target once there.
+   - On a target change, `prune()` removes songs that would lead away from it.
+   - Artists whose known songs are near the target are searched first (`_artist_mood_fit`).
+4. **No catalog songs for mood steps** (`backend/actuators/session.py`):
+   - If the pool has no song near the step (no pick, or picks averaging more than `pool_max_jump` 0.3 from the waypoint), the cycle adds nothing and sets `needs_more_songs`. The daemon then starts a refresh (at most every 2 min).
+   - The static catalog is used only by the emergency fill, to keep the music going.
+5. **Pool cleared at session end** (`backend/daemon.py`, `recommender/store.py`):
+   - End session, New session, quit and log-out stop the running refresh and run `Recommender.clear()`. That empties `data/recommender.db` (songs, artists, profile) with VACUUM and resets the in-memory pool.
+   - Refreshes run only while a session runs.
+   - The mood-feature cache (`data/mood.db`) is kept. It is a general cache of song measurements, which also makes rebuilding the next pool faster.
+6. **Config:**
+   - Added: `recommender.ready_songs` (15), `recommender.prepare_max_s` (600), `session.prepare_min_upcoming` (2), `session_seq`.
+   - Removed: `recommender.min_pool`.
+   - Changed meaning: `session.pool_max_jump` is now the threshold for "add nothing, grow the pool".
+7. **Docs:**
+   - SPEC: session buttons, session end clears the pool, the pool is goal-specific, preparing, no catalog steps, acceptance criteria.
+   - Also updated: README, MANUAL (sidebar controls, session lifecycle).
 
-**Results (live, read-only, user's account):** top languages **Telugu 52%, Hindi 33%** (Punjabi 10% and English 3% left out). Favourites: Pritam, Arijit Singh, Thaman S, Sid Sriram. The pool grew 36 → 66 → 86 songs over 3 refreshes (~1–1.5 min each, in the background), 16 of them released in the last year. Planned additions from the user's own queue (mood 0.49, 0.64):
-- toward Calm: *Tainu Khabar Nahi*, *Samjhawan*, *Vaarevaa Vaarevaa*
-- toward Energized: *Hoyna Hoyna*, *Jaan Se Guzarte Hain*
+**Tests:** 222 pass. New: session buttons write the config and swap visibility; status messages; preparing adds nothing but keeps 2 songs ahead; "nothing near the step" waits and sets `needs_more_songs` (no catalog); the full lifecycle (no refresh before Start → preparing → ready and adding from the pool → target change prepares again → New session ends, clears and restarts → End session clears and stops refreshing); the preparing time limit; goal filtering, `prune()` and `clear()`.
 
-**Tests:** 218 pass (new: 18 in `tests/recommender/`: language detection, profile and top-2 rule, freshness, pool building, duplicates, lyrics budget and cache, artist fallback, skip penalty, early stop, language filter and taste in the score, pool vs catalog fallback, daemon background refresh and handover).
-
-**Not done / limits** (in `LOG.md` #18–#21): the pool starts small and grows each refresh; about 25% of songs still have no known language; it depends on free third-party services; dubbed songs without a marker may get the wrong language. Not yet run inside a live session (only read-only checks).
+**Not done / limits:**
+- Not yet run in a live session.
+- Each session rebuilds its pool from scratch, so the first minutes of a session are spent preparing (the cached mood features speed this up).
+- If the user's taste has few songs of the target mood, waiting can last up to 10 minutes. Afterwards the session adds from what the pool has, or nothing.

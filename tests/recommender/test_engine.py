@@ -170,3 +170,30 @@ def test_stop_ends_a_refresh_early():
     rec.stop.set()
     rec.refresh()
     assert spotify.queries == []
+
+
+class PointFeatures:
+    name = "points"
+
+    def __init__(self, points):
+        self.points = points
+
+    def fetch(self, ids):
+        return {i: Features(*self.points[i], 0.2) for i in ids if i in self.points}
+
+
+def test_pool_keeps_only_songs_useful_for_the_goal_and_clears():
+    short = [T(1, "calm", ["A"], lang="te"), T(2, "loud", ["A"], lang="te"), T(3, "mid", ["A"], lang="te")]
+    points = {"t1": (0.55, 0.25), "t2": (0.9, 0.95), "t3": (0.6, 0.5)}
+    rec = Recommender(FakeSpotify(short), FeatureChain([PointFeatures(points)]), Store(":memory:"),
+                      RecommenderParams(), None, FakeDeezer({}), FakeLyrics({}), now=lambda: NOW)
+    rec.set_goal(target=(0.6, 0.25), mood=(0.7, 0.7))           # heading for calm
+    names = {t.name for t in rec.refresh().tracks}
+    assert names == {"calm", "mid"}                              # "loud" would lead away from the target
+    assert rec.useful_count() == 2
+    rec.set_goal(target=(0.6, 0.25), mood=(0.62, 0.45))          # the mood moved closer
+    assert rec.prune() == 1 and rec.table().tracks[0].name == "calm"
+
+    rec.clear()
+    assert len(rec.table()) == 0 and rec.profile is None and rec.store.tracks() == {}
+    assert rec.store.get("profile") is None

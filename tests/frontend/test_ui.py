@@ -70,12 +70,34 @@ def test_select_mood_reports_write_time(tray_app, tmp_config):
     assert load_config(tmp_config)["target_mood"] == "calm"
 
 
-def test_pause_toggle_writes_config(qtbot, tray_app, tmp_config):
+def test_session_buttons_write_config(qtbot, tray_app, tmp_config):
+    panel = tray_app.panel
+    tray_app.end_session()  # as at launch: no session yet
     tray_app.show_sidebar()
-    qtbot.mouseClick(tray_app.panel.pause, Qt.MouseButton.LeftButton)
-    assert load_config(tmp_config)["paused"] is True
-    qtbot.mouseClick(tray_app.panel.pause, Qt.MouseButton.LeftButton)
+    assert panel.start_session.isVisible() and not panel.end_session.isVisible()
+    qtbot.mouseClick(panel.start_session, Qt.MouseButton.LeftButton)
     assert load_config(tmp_config)["paused"] is False
+    assert panel.end_session.isVisible() and panel.new_session.isVisible() and not panel.start_session.isVisible()
+
+    seq = load_config(tmp_config).get("session_seq", 0)
+    qtbot.mouseClick(panel.new_session, Qt.MouseButton.LeftButton)
+    cfg = load_config(tmp_config)
+    assert cfg["session_seq"] == seq + 1 and cfg["paused"] is False  # the daemon ends + restarts on this
+
+    qtbot.mouseClick(panel.end_session, Qt.MouseButton.LeftButton)
+    assert load_config(tmp_config)["paused"] is True
+    assert panel.start_session.isVisible() and not panel.end_session.isVisible()
+
+
+def test_preparing_and_no_session_messages(qtbot):
+    panel = SidebarPanel({"focused": {"label": "Focused", "valence": 0.5, "energy": 0.45}})
+    qtbot.addWidget(panel)
+    panel.show_state({"track": "A - B", "paused": True}, "focused")
+    assert "Start session" in panel.details.text()
+    panel.show_state({"track": "A - B", "paused": False,
+                      "session": {"status": "managing", "preparing": True},
+                      "recommender": {"useful": 7, "ready_songs": 15, "languages": ["Telugu", "Hindi"]}}, "focused")
+    assert "Preparing" in panel.details.text() and "7/15" in panel.details.text() and "Telugu" in panel.details.text()
 
 
 def test_external_config_change_reflected(tray_app, tmp_config):

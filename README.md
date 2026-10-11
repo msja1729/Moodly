@@ -129,7 +129,7 @@ The daemon runs as a separate background process and logs to `data/daemon.log`. 
 
 Only one live daemon can run at a time; a second one exits with a message.
 
-Play something in Spotify, then click the tray icon to open the sidebar and pick **Focused / Calm / Energized / Wind Down**. The session starts right away (or as soon as music plays). Pause nudging, quitting the daemon, or logging out ends it: the next 10 songs go back to your queue and the session playlist is deleted. The UI writes `config/config.json`, and the daemon's file watcher reacts within ~50 ms. The UI shows the live mood estimate from `data/state.json`.
+Play something in Spotify, click the tray icon to open the sidebar, pick **Focused / Calm / Energized / Wind Down**, and click **Start session**. The app first prepares a pool of songs for you (nothing is added meanwhile), then starts adding. **End session** (also quitting or logging out) ends it: the next 10 songs go back to your queue, the session playlist is deleted and the song pool is cleared. **New session** ends the current one and starts a fresh one. The UI writes `config/config.json`, and the daemon's file watcher reacts within ~50 ms. The UI shows the live mood estimate from `data/state.json`.
 
 Useful daemon flags:
 
@@ -171,7 +171,7 @@ The installer step needs Inno Setup 6 (`winget install JRSoftware.InnoSetup`); w
 **Spotify limit for other users:** the Spotify app behind `spotify.client_id` is in Spotify's *Development mode*, which only lets in the Spotify accounts you add under *User Management* in the [developer dashboard](https://developer.spotify.com/dashboard). Add each user's Spotify email there before they sign in. Opening the app to everyone needs Spotify's extended-quota approval; check Spotify's current rules first.
 
 ## Song recommendation
-New songs come from a live **taste pool**: songs by the user's favourite artists and their related artists (Deezer), in the user's **top-2 languages** (from their recent Spotify listening), with mood features. New releases are included. The daemon refreshes it in the background at start and every 30 minutes; it grows with each refresh and is cached in `data/recommender.db`. Until it has 30 songs, or when it has nothing near the next mood step, the static catalog is used. Settings: `recommender` in `config/config.json` (e.g. `"languages": ["te", "hi"]` to fix the languages). Details: `SPEC.md.md` → "Song Recommendation (Phase 3)".
+New songs come from a live **taste pool**: songs by the user's favourite artists and their related artists (Deezer), in the user's **top-2 languages** (from their recent Spotify listening), with mood features, aimed at the current target. New releases are included. The pool is built per session: at **Start session** (and after each target change) the session waits, adding nothing, until the pool holds 15 useful songs (at most 10 minutes); then it adds from the pool. When the pool has nothing near a mood step, the cycle adds nothing and the pool grows first. The pool (`data/recommender.db`) is cleared when the session ends. The static catalog is only used to keep the music from running out. Settings: `recommender` in `config/config.json` (e.g. `"languages": ["te", "hi"]` to fix the languages). Details: `SPEC.md.md` → "Song Recommendation (Phase 3)".
 
 ## Tuning (`config/config.json`)
 - `moods.*`: coordinates, VS Code theme, Terminal scheme and Kelvin for each mood.

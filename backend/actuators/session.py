@@ -11,9 +11,14 @@ that instead:
             where playback is; mood = average point of the window (now playing
             + upcoming); plan_cycle() picks songs to insert and songs to
             remove; apply the edits. Songs come from `table` (the recommender's
-            pool: the user's taste and top-2 `languages`) and, when it has
-            nothing suitable for this mood step, from `fallback_table` (the
-            static catalog + library, any language). Songs that already played this session
+            pool: the user's taste and top-2 `languages`).
+    preparing  (set by the daemon while the pool is being filled for a new
+            session or target) cycles only measure the mood: nothing is added
+            or removed, except to keep `prepare_min_upcoming` songs ahead so
+            the music never stops. When the pool has nothing near a mood step
+            (picks average more than `pool_max_jump` away), the cycle adds
+            nothing and sets `needs_more_songs` so the pool grows; the static
+            catalog (`fallback_table`) is used only to keep the music going. Songs that already played this session
             (e.g. from Spotify's own queue) are removed from the upcoming part,
             so nothing plays twice.
     end     (pause nudging, quit, log out) the next few songs are handed back
@@ -39,8 +44,9 @@ import numpy as np
 
 from backend.catalog import CatalogTrack, TrackTable
 from backend.features import FeatureChain, Features
-from backend.mood_space import Direction, MarkovParams, MoodChain, Point
-from backend.selection import MusicalContext, SelectionParams, WindowItem, plan_cycle, rank_candidates
+from backend.mood_space import Direction, MarkovParams, MoodChain, Point, distance
+from backend.selection import (CyclePlan, MusicalContext, SelectionParams, WindowItem, plan_cycle, queue_mood,
+                               rank_candidates)
 from backend.spotify.client import Item, PremiumRequired, RateLimited
 
 log = logging.getLogger(__name__)
@@ -67,7 +73,8 @@ class SessionParams:
     resync_after_edits: bool = True  # replay the playlist (same song, same moment) so Spotify sees the edits
     recent_exclusion: int = 50       # songs played recently are not picked again...
     replay_after: int = 10           # ...unless the catalog runs dry; then only the last 10 are excluded
-    pool_max_jump: float = 0.3       # a taste-pool song this far from the waypoint still beats the catalog
+    pool_max_jump: float = 0.3       # pool picks further than this (on average) from the waypoint: add nothing
+    prepare_min_upcoming: int = 2    # while preparing, songs added only to keep this many ahead
 
     @classmethod
     def from_config(cls, cfg: Mapping) -> "SessionParams":
@@ -125,6 +132,8 @@ class PlaylistSession:
         self.client = client
         self.table = table
         self.fallback_table: TrackTable | None = None
+        self.preparing = False         # pool being filled: measure only, don't add or remove
+        self.needs_more_songs = False  # the pool had nothing near the last mood step
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
@@ -368,24 +377,27 @@ class PlaylistSession:
 
         chain = self.chain_for(target)
         exclude = self.removed_ids | set(self.recent)
-        retarget = reason in ("start", "target_change")
-        plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget,
-                          self.languages)
-        if plan.waypoint is not None and self._poor(plan):
-            # Small catalogs run out of unplayed songs near the target: allow older repeats.
-            relaxed = self.removed_ids | set(list(self.recent)[-self.params.replay_after:])
-            retry = plan_cycle(window, self.table, target, chain, self.rng, self.selection, relaxed, retarget,
-                               self.languages)
-            if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
-                plan = retry
-        if (plan.waypoint is not None and self._poor(plan, self.params.pool_max_jump, average=True)
-                and self.fallback_table is not None):
-            # Not even a bigger step is in the taste pool: use the static catalog (any language).
-            retry = plan_cycle(window, self.fallback_table, target, chain, self.rng, self.selection, exclude,
-                               retarget)
-            if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
-                log.info("no suitable song in the taste pool for this step; using the catalog")
-                plan = retry
+        retarget = reason in ("start", "target_change", "ready")
+        if self.preparing:
+            # The pool is being filled: only measure the mood (the daemon decides when it's ready).
+            mood = queue_mood(window, self.selection.window_size)
+            plan = CyclePlan(mood, distance(mood, target) if mood is not None else None)
+        else:
+            plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget,
+                              self.languages)
+            if plan.waypoint is not None and self._poor(plan):
+                # Small pools run out of unplayed songs near the target: allow older repeats.
+                relaxed = self.removed_ids | set(list(self.recent)[-self.params.replay_after:])
+                retry = plan_cycle(window, self.table, target, chain, self.rng, self.selection, relaxed, retarget,
+                                   self.languages)
+                if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
+                    plan = retry
+            if (self.fallback_table is not None and plan.waypoint is not None
+                    and (not plan.insertions or self._poor(plan, self.params.pool_max_jump, average=True))):
+                # Nothing in the taste pool near this mood step: add nothing now; the pool grows first.
+                log.info("no song in the taste pool near this mood step; waiting for more songs")
+                plan.insertions = []
+                self.needs_more_songs = True
         self.mood, self.deviation = plan.mood, plan.deviation
 
         # Removals: by URI (Spotify removes every occurrence), never a protected song.
@@ -401,9 +413,11 @@ class PlaylistSession:
         # -> playlist index. Positions inside Spotify's queue map to "right after the current song".
         insertions = plan.insertions
         upcoming_after = len(entries) - cur - 1 + n_manual
-        if upcoming_after + len(insertions) < self.selection.min_length:
+        keep_ahead = self.params.prepare_min_upcoming if self.preparing else self.selection.min_length
+        if upcoming_after + len(insertions) < keep_ahead:
+            # Keep the music going (pool first; the static catalog only if the pool can't).
             insertions = insertions + self._emergency_fill(window, target, exclude, insertions,
-                                                           self.selection.min_length - upcoming_after - len(insertions))
+                                                           keep_ahead - upcoming_after - len(insertions))
         added: list[str] = []
         length = len(entries)
         for p, track in insertions:

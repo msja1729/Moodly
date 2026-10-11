@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBox
 
 from frontend.components import SidebarPanel
 from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, ensure_app_home, load_config,
-                              resolve_path, set_paused, set_target_mood)
+                              resolve_path, set_paused, set_target_mood, start_new_session)
 
 log = logging.getLogger("ui")
 
@@ -146,7 +146,9 @@ class MoodTrayApp:
         self.panel = SidebarPanel(self.cfg["moods"])
         self.window = GlassWindow(self.panel)
         self.panel.moodSelected.connect(self.select_mood)
-        self.panel.pauseToggled.connect(self.toggle_pause)
+        self.panel.sessionStartRequested.connect(self.start_session)
+        self.panel.sessionEndRequested.connect(self.end_session)
+        self.panel.sessionNewRequested.connect(self.new_session)
         self.panel.quitRequested.connect(QApplication.quit)
         self.panel.logoutRequested.connect(self.log_out)
         self.panel.set_account(account)
@@ -189,8 +191,18 @@ class MoodTrayApp:
         self.refresh(reload=False)
         return elapsed
 
-    def toggle_pause(self, paused: bool) -> None:
-        self.cfg = set_paused(paused, self.config_path)
+    # A session = the daemon managing the music. config "paused" = no session; "session_seq" = new session.
+    def start_session(self) -> None:
+        self.cfg = set_paused(False, self.config_path)
+        self.refresh(reload=False)
+
+    def end_session(self) -> None:
+        self.cfg = set_paused(True, self.config_path)
+        self.refresh(reload=False)
+
+    def new_session(self) -> None:
+        self.cfg = start_new_session(self.config_path)
+        self.refresh(reload=False)
 
     def log_out(self) -> None:
         """Forget the active Spotify account, then let the user choose another one."""
@@ -256,7 +268,7 @@ class MoodTrayApp:
         key = self.cfg["target_mood"]
         mood = self.cfg["moods"][key]
         self.panel.set_selected(key)
-        self.panel.set_paused(bool(self.cfg.get("paused")))
+        self.panel.set_session(not self.cfg.get("paused"))
         self.panel.show_state(self.read_state(), key)
         self.tray.setIcon(mood_icon(mood.get("color", "#5B8DEF")))
         who = f" ({self.account.display_name})" if self.account else ""
@@ -321,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     from dotenv import load_dotenv
     load_dotenv(PROJECT_ROOT / ".env")  # optional development overrides
     quit_watch = watch_quit_requests(APP_HOME / "data" / "app.quit")  # noqa: F841 (kept alive)
+    set_paused(True, DEFAULT_CONFIG_PATH)  # no session until the user clicks "Start session"
     account = choose_spotify_account()
     if account is None:
         return 0

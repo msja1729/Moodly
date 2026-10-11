@@ -135,5 +135,12 @@ class Store:
             self._db.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, json.dumps(value)))
             self._db.commit()
 
+    def clear(self) -> None:
+        """Forget everything (the pool is per session; the file shrinks back)."""
+        with self._lock:
+            self._db.executescript("DELETE FROM tracks; DELETE FROM artists; DELETE FROM kv;")
+            self._db.commit()
+            self._db.execute("VACUUM")
+
     def close(self) -> None:
         self._db.close()

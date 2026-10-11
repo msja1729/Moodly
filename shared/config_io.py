@@ -150,6 +150,15 @@ def set_paused(paused: bool, path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str
     return cfg
 
 
+def start_new_session(path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """End the current session (if any) and start a new one: the daemon reacts to the new `session_seq`."""
+    cfg = load_config(path)
+    cfg["paused"] = False
+    cfg["session_seq"] = int(cfg.get("session_seq", 0)) + 1
+    atomic_write_json(path, cfg)
+    return cfg
+
+
 def target_point(cfg: dict[str, Any]) -> tuple[float, float]:
     mood = cfg["moods"][cfg["target_mood"]]
     return float(mood["valence"]), float(mood["energy"])

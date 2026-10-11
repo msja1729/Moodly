@@ -49,7 +49,7 @@ QPushButton#Link:hover {{ color: {TEXT}; }}
 SESSION_NOTES = {
     "waiting": "Start playing something in Spotify to begin",
     "user_paused": "Spotify is paused - press play to continue",
-    "user_took_over": "You started other music - pick a mood to resume",
+    "user_took_over": "You started other music - click New session to start again",
     "not_premium": "This account doesn't have Spotify Premium",
 }
 
@@ -164,7 +164,9 @@ class Card(QWidget):
 
 class SidebarPanel(QWidget):
     moodSelected = pyqtSignal(str)
-    pauseToggled = pyqtSignal(bool)
+    sessionStartRequested = pyqtSignal()
+    sessionEndRequested = pyqtSignal()
+    sessionNewRequested = pyqtSignal()
     quitRequested = pyqtSignal()
     logoutRequested = pyqtSignal()
 
@@ -239,18 +241,27 @@ class SidebarPanel(QWidget):
         sc.addWidget(self.details)
         root.addWidget(status_card)
 
+        # Session buttons: "Start session" when none runs; "End session" and "New session" during one.
         footer = QHBoxLayout()
-        self.pause = QPushButton("Pause nudging")
-        self.pause.setObjectName("Pill")
-        self.pause.setCheckable(True)
-        self.pause.toggled.connect(self.pauseToggled.emit)
+        self.start_session = QPushButton("Start session")
+        self.end_session = QPushButton("End session")
+        self.new_session = QPushButton("New session")
+        for button, signal in ((self.start_session, self.sessionStartRequested),
+                               (self.end_session, self.sessionEndRequested),
+                               (self.new_session, self.sessionNewRequested)):
+            button.setObjectName("Pill")
+            button.clicked.connect(signal.emit)
+            footer.addWidget(button)
+        self.end_session.setToolTip("End the session: songs go back to your queue, the session playlist "
+                                    "and the song pool are deleted")
+        self.new_session.setToolTip("End this session and start a new one with a fresh song pool")
         quit_btn = QPushButton("Quit")
         quit_btn.setObjectName("Pill")
         quit_btn.clicked.connect(self.quitRequested.emit)
-        footer.addWidget(self.pause)
         footer.addStretch(1)
         footer.addWidget(quit_btn)
         root.addLayout(footer)
+        self.set_session(False)
 
     def set_account(self, account) -> None:
         """Show the Spotify account in use (an Account or None)."""
@@ -268,11 +279,11 @@ class SidebarPanel(QWidget):
         if key in self.tiles and not self.tiles[key].isChecked():
             self.tiles[key].setChecked(True)
 
-    def set_paused(self, paused: bool) -> None:
-        if self.pause.isChecked() != paused:
-            self.pause.blockSignals(True)
-            self.pause.setChecked(paused)
-            self.pause.blockSignals(False)
+    def set_session(self, active: bool) -> None:
+        """Show "Start session" when no session runs, "End session" + "New session" during one."""
+        self.start_session.setVisible(not active)
+        self.end_session.setVisible(active)
+        self.new_session.setVisible(active)
 
     def show_state(self, state: Mapping[str, Any] | None, target_key: str) -> None:
         mood_cfg = self.moods.get(target_key, {})
@@ -284,9 +295,18 @@ class SidebarPanel(QWidget):
             self.details.setText("Daemon not running")
             return
         self.now_playing.setText(state.get("track") or "Nothing playing")
+        if state.get("paused"):
+            self.details.setText("No session - click Start session to begin")
+            return
         session = state.get("session")
         if session and session.get("status") in SESSION_NOTES:
             self.details.setText(SESSION_NOTES[session["status"]])
+            return
+        rec = state.get("recommender")
+        if session and session.get("preparing"):
+            ready = f" ({rec['useful']}/{rec['ready_songs']} ready)" if rec else ""
+            langs = f" in {', '.join(rec['languages'])}" if rec and rec.get("languages") else ""
+            self.details.setText(f"Preparing songs for you{langs}{ready} - nothing is added until then")
             return
         parts = []
         if state.get("deviation") is not None:

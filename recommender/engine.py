@@ -13,14 +13,17 @@ refresh() runs in a background thread (startup, then every `refresh_s`):
                  (up to `preview_budget` songs) iTunes preview -> ReccoBeats analysis
     6 pool       songs in the top languages, on taste, with features -> TrackTable
 
-Each refresh does a bounded amount of work, and everything is cached
-(recommender.store, the feature cache), so the pool grows over refreshes and
-survives restarts. Moodly picks from the pool by mood (selection.py), adding
-the taste and freshness scores computed here.
+The pool is per session and aimed at the current goal (set_goal): it keeps
+only songs that move the mood toward the target ("useful" songs), and artists
+whose songs have that mood are searched first. Each refresh does a bounded
+amount of work; everything is cached (recommender.store) for the session and
+cleared when the session ends (clear()). Moodly picks from the pool by mood
+(selection.py), adding the taste and freshness scores computed here.
 """
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections import Counter, defaultdict
@@ -61,7 +64,9 @@ class RecommenderParams:
     min_taste: float = 0.05
     fresh_days: int = 365
     country: str = "US"             # iTunes store used for previews
-    min_pool: int = 30              # below this, Moodly keeps using the static catalog
+    ready_songs: int = 15           # useful songs needed before the session starts adding
+    prepare_max_s: float = 600.0    # stop waiting for `ready_songs` after this long
+    settle_band: float = 0.15       # near the target, songs this close to it count as useful
 
     @classmethod
     def from_config(cls, cfg: Mapping) -> "RecommenderParams":
@@ -88,6 +93,9 @@ class Recommender:
         self._wanted_features: dict[str, None] = {}  # songs Moodly met without features
         self._lock = threading.Lock()
         self.status = "not started"
+        self.target: tuple[float, float] | None = None  # the goal the pool is aimed at (set_goal)
+        self.mood: tuple[float, float] | None = None
+        self._preview = None
 
     @classmethod
     def build(cls, client, feature_providers: list, cache, store_path, params: RecommenderParams, feedback=None):
@@ -103,6 +111,7 @@ class Recommender:
         features = FeatureChain([p for p in feature_providers if p is not None] + [preview], cache)
         rec = cls(SpotifySource(client), features, store, params, feedback, Deezer(http), Lrclib(http))
         preview.stop = rec.stop
+        rec._preview = preview
         return rec
 
     # ------------------------------------------------------------- results
@@ -112,6 +121,41 @@ class Recommender:
     @property
     def languages(self) -> list[str]:
         return list(self.profile.top_languages) if self.profile else []
+
+    # ------------------------------------------------------------- goal
+    def set_goal(self, target, mood) -> None:
+        """Aim the pool at moving `mood` toward `target` (mood None = not known yet)."""
+        self.target = tuple(target) if target is not None else None
+        self.mood = tuple(mood) if mood is not None else None
+
+    def is_useful(self, point, mood=None, target=None) -> bool:
+        """A song is useful if it is closer to the target than the mood is (or, near the target, close to it)."""
+        target = target if target is not None else self.target
+        mood = mood if mood is not None else self.mood
+        if target is None or mood is None:
+            return True
+        reach = max(math.dist(mood, target), self.params.settle_band)
+        return math.dist(point, target) < reach
+
+    def useful_count(self, mood=None, target=None) -> int:
+        return sum(self.is_useful(t.point, mood, target) for t in self._table.tracks)
+
+    def prune(self, mood=None, target=None) -> int:
+        """Drop pool songs that would take the mood away from the target. Returns how many remain."""
+        self._table = TrackTable([t for t in self._table.tracks if self.is_useful(t.point, mood, target)])
+        return len(self._table)
+
+    def clear(self) -> None:
+        """End of session: forget the pool, the profile and the cache on disk."""
+        self.store.clear()
+        self.profile = None
+        self._table = TrackTable([])
+        with self._lock:
+            self._wanted_features = {}
+        if self._preview is not None:
+            self._preview.tried.clear()
+        self.target = self.mood = None
+        self.status = "cleared"
 
     def want_features(self, track_ids) -> None:
         """Songs Moodly saw without mood features (e.g. the user's queue): analyse them next refresh."""
@@ -130,7 +174,7 @@ class Recommender:
             self.status = "no languages known yet"
         artists = self._artist_weights()
         self.status = "finding songs"
-        self._explore(artists)
+        self._explore(artists, self._artist_mood_fit(artists))
         self.status = "detecting languages"
         self._resolve_languages(artists)
         self.status = "analysing moods"
@@ -228,9 +272,29 @@ class Recommender:
         return {k: skips[k] / (plays[k] + 2) for k in plays}
 
     # 3 ----------------------------------------------------------- songs
-    def _explore(self, artists: dict[str, tuple[float, str]]) -> None:
+    def _artist_mood_fit(self, artists: dict[str, tuple[float, str]]) -> dict[str, float]:
+        """artist key -> 0..1, how close the artist's known songs are (on average) to the target."""
+        cache = getattr(self.features, "cache", None)
+        if self.target is None or cache is None:
+            return {}
+        tracks = self.store.tracks()
+        feats = cache.get_many(list(tracks))
+        points: dict[str, list] = defaultdict(list)
+        for tid, f in feats.items():
+            for a in tracks[tid].artists[:1]:
+                points[artist_key(a)].append(f.point)
+        out = {}
+        for k in artists:
+            if pts := points.get(k):
+                centre = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+                out[k] = max(0.0, 1.0 - math.dist(centre, self.target) / 0.5)
+        return out
+
+    def _explore(self, artists: dict[str, tuple[float, str]], mood_fit: dict[str, float] | None = None) -> None:
+        """Search a few artists' songs: the best taste first, boosted when their songs have the target mood."""
         p = self.params
-        due = [(w, name) for w, name in artists.values()
+        mood_fit = mood_fit or {}
+        due = [(w * (0.75 + 0.5 * mood_fit.get(k, 0.5)), name) for k, (w, name) in artists.items()
                if self.now() - self.store.artist(name).searched_at > p.search_ttl_days * DAY]
         year = datetime.fromtimestamp(self.now()).year
         for w, name in sorted(due, reverse=True)[: p.artists_per_refresh]:
@@ -323,7 +387,7 @@ class Recommender:
             f = feats.get(t.id)
             # One copy per song: the same recording is often on several releases (film album, single, ...).
             key = (title_core(t.name), artist_key(t.artists[0]) if t.artists else "")
-            if f is None or key in seen:
+            if f is None or key in seen or not self.is_useful(f.point):
                 continue
             seen.add(key)
             pool.append(CatalogTrack(t.id, t.name, t.artists_text, f, t.duration_ms, explicit=t.explicit,

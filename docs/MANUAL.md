@@ -206,7 +206,7 @@ The two programs are independent: you can stop either one without affecting the 
 │ │ 0.46 from target · ~4 songs  │ │
 │ │ to go · 6100K · queued: …    │ │
 │ └──────────────────────────────┘ │
-│ [Pause nudging]           [Quit] │
+│ [Start session]           [Quit] │   (during a session: [End session] [New session] [Quit])
 └──────────────────────────────────┘
 ```
 
@@ -215,7 +215,9 @@ The two programs are independent: you can stop either one without affecting the 
 | **Mood tiles** | Click one to set your target. Within a second, the themes switch, the screen starts moving toward that mood's temperature, and a bridging track is queued if you're far enough from the target. |
 | **Mood map** | The white dot is your current mood. The colored dot is the target. The dashed line is the distance still to go. |
 | **Status card** | Shows the current track, the distance to the target, roughly how many songs it will take to get there, the screen temperature, and the last bridging track queued. |
-| **Pause nudging** | Stops all changes: no tracks are queued and the screen drifts back to neutral. The app keeps tracking your mood, and skips are still logged. Click it again to resume. |
+| **Start session** | Shown when no session runs (always at launch). Starts a session: themes and screen follow the target, and the app first prepares a pool of songs for you (your taste, your top-2 languages, the target mood). While it prepares, nothing is added to your music; your own queue keeps playing. Once the pool is ready, it starts adding songs. |
+| **End session** | Ends the session: the next 10 songs go back to your normal queue, the session playlist is deleted, the song pool is cleared from disk, and the screen drifts back to neutral. |
+| **New session** | Ends the current session (as above) and starts a new one with a fresh song pool. |
 | **Quit** | Closes the tray UI only. The daemon keeps running. |
 
 The **tray icon color** matches your current target mood. Hover over it to see the mood's name.
@@ -227,7 +229,8 @@ If the status card says **"Daemon not running"**, the daemon isn't running or ha
 ## 6. What to expect day to day
 
 ### The session playlist
-- **When it starts:** as soon as you pick a mood while music is playing (or when you start playing). Your current song and your queue move into a private playlist, **Ambient Mood session**. The same song keeps playing from the same second.
+- **When it starts:** when you click **Start session** (or **New session**) while music is playing (or when you start playing). Your current song and your queue move into a private playlist, **Ambient Mood session**. The same song keeps playing from the same second.
+- **Preparing:** first the app fills a song pool for the target in the background (usually a few minutes; the sidebar shows "Preparing songs for you… 7/15 ready"). Nothing is added or removed meanwhile, except 1–2 songs if your music would otherwise run out. When you pick a **new target** during a session, songs that would lead away from it leave the pool, and it prepares again the same way.
 - **While it runs:** on each song change and every 90 seconds, the app:
   1. averages the songs ahead (that's your mood)
   2. takes one Markov-chain step toward the target
@@ -237,8 +240,8 @@ If the status card says **"Daemon not running"**, the daemon isn't running or ha
 
   The queue is kept at about 15 songs, never fewer than 8.
 - **Your own "Add to queue" songs** still play first and count toward your mood, and they're never removed.
-- **If you pause Spotify,** the app waits. **If you start other music,** the app stops and deletes its playlist (the sidebar says so). Pick a mood again to restart.
-- **When it ends** (Pause nudging, quitting, logging out): the next 10 songs go to your normal queue so the music continues, and the playlist is deleted. A playlist left behind by a crash is deleted the next time a session starts.
+- **If you pause Spotify,** the app waits. **If you start other music,** the app stops and deletes its playlist (the sidebar says so). Click **New session** to start again.
+- **When it ends** (End session, New session, quitting, logging out): the next 10 songs go to your normal queue so the music continues, the playlist is deleted, and the song pool is cleared. A playlist left behind by a crash is deleted the next time a session starts.
 - **How fast:** your mood is the average of about 20 songs, so it moves as songs play. A big change (e.g. Energized → Wind Down) takes roughly 2–3 hours with the catalog imported; small changes are quicker.
 
 ### Phase 1 mode (`audio.mode = "queue"`)

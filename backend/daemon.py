@@ -18,10 +18,16 @@ Audio modes (config "audio.mode"):
                                   bridging song at a time is appended to
                                   Spotify's queue (actuators/audio.py)
 
-Recommender (live session mode, config "recommender"): a background thread
-refreshes a pool of songs matching the user's taste and top-2 languages
-(recommender/) at startup and every `refresh_s`; the session picks from it by
-mood and falls back to the static catalog when it has nothing suitable.
+Sessions are started and ended from the sidebar (config "paused" = no session;
+"session_seq" bumped = start a new one). With the recommender (live session
+mode, config "recommender"):
+    start / new target   the session is "preparing": nothing is added or removed
+                         while background refreshes fill the song pool for the
+                         goal; once it holds `ready_songs` useful songs (or after
+                         `prepare_max_s`), the session starts adding from it
+    during the session   a refresh every `refresh_s`, or sooner when the pool had
+                         nothing near a mood step
+    end of session       the pool (data/recommender.db) is cleared
 """
 from __future__ import annotations
 
@@ -98,6 +104,9 @@ class Daemon:
         self._rec_thread: threading.Thread | None = None
         self._rec_ready = False
         self._next_rec = self.clock.now()
+        self._rec_started_at = -1e18
+        self._prepare_started: float | None = None
+        self._session_seq = int(cfg.get("session_seq", 0))
         if recommender is not None and session is not None:
             session.on_missing_features = recommender.want_features
 
@@ -125,6 +134,7 @@ class Daemon:
             self.display.set_target(kelvin)
             self.feedback.log_intervention(now, "display", f"target {self.display.target:.0f}K", mood)
 
+        self._begin_preparing()
         await self._audio_step("target_change")
 
     @property
@@ -141,10 +151,17 @@ class Daemon:
             log.warning("ignoring unreadable config.json: %s", e)
             return
         old = (self.target_mood, self.paused)
+        old_seq = self._session_seq
         self.cfg = cfg
         self.target_mood, self.target = cfg["target_mood"], target_point(cfg)
         self.paused = bool(cfg.get("paused", False))
-        if (self.target_mood, self.paused) != old:
+        self._session_seq = int(cfg.get("session_seq", 0))
+        if self._session_seq != old_seq and not self.paused:
+            log.info("starting a new session")
+            await self.end_session()
+            await self.apply_target("new_session")
+            self.write_state()
+        elif (self.target_mood, self.paused) != old:
             await self.apply_target("config_change")
             self.write_state()
 
@@ -212,10 +229,28 @@ class Daemon:
             self.last_bridge = s.last_added[-1]
 
     async def end_session(self) -> None:
+        """End the session (hand the next songs back, delete the playlist) and clear the song pool."""
         if self.session is not None:
             async with self._session_lock:
                 if self.session.active:
                     await asyncio.to_thread(self.session.end, True)
+        await self._clear_pool()
+
+    async def _clear_pool(self) -> None:
+        if self.recommender is None:
+            return
+        self.recommender.stop.set()  # a running refresh stops at its next step
+        if self._rec_thread is not None:
+            await asyncio.to_thread(self._rec_thread.join, 30)
+        self.recommender.stop.clear()
+        await asyncio.to_thread(self.recommender.clear)
+        self._rec_ready = False
+        self._prepare_started = None
+        if self.session is not None:
+            self.session.preparing = False
+            self.session.needs_more_songs = False
+            self.session.use_tables(self._catalog_table)
+        log.info("song pool cleared")
 
     async def _inject(self, reason: str) -> None:
         inj = await self.audio.maybe_inject(self.inference.mood, self.target, reason)
@@ -223,10 +258,38 @@ class Daemon:
             self.last_bridge = f"{inj.candidate.artists} - {inj.candidate.name}"
 
     # ------------------------------------------------------------- recommender
-    def _start_rec_refresh(self) -> None:
-        """Refresh the song pool in a background thread (it takes a minute or two; playback goes on)."""
-        if self.recommender is None or (self._rec_thread is not None and self._rec_thread.is_alive()):
+    def _begin_preparing(self) -> None:
+        """New session or new target: stop adding until the pool has enough songs for the goal."""
+        if self.recommender is None or self.session is None or self.paused:
             return
+        self.session.preparing = True
+        self.session.needs_more_songs = False
+        self._prepare_started = self.clock.now()
+        self.recommender.set_goal(self.target, self.session.mood)
+        kept = self.recommender.prune()  # songs that would lead away from the new target leave the pool
+        self._rec_ready = True
+        self._start_rec_refresh()
+        log.info("preparing songs for %s (%d useful songs in the pool already)", self.target_mood, kept)
+
+    async def _check_ready(self) -> None:
+        """End the preparing phase once the pool holds enough useful songs (or waiting took too long)."""
+        s, rec = self.session, self.recommender
+        if rec is None or s is None or not s.preparing or self.paused:
+            return
+        useful = rec.useful_count(s.mood, self.target)
+        waited = self.clock.now() - (self._prepare_started if self._prepare_started is not None else self.clock.now())
+        if useful >= rec.params.ready_songs or waited >= rec.params.prepare_max_s:
+            s.preparing = False
+            log.info("%d useful songs ready after %.0fs; the session starts adding songs", useful, waited)
+            await self._session_step("ready")
+
+    def _start_rec_refresh(self) -> bool:
+        """Refresh the song pool in a background thread (a minute or two; playback goes on). True if started."""
+        if self.recommender is None or (self._rec_thread is not None and self._rec_thread.is_alive()):
+            return False
+        self._rec_started_at = self.clock.now()
+        if self.session is not None:
+            self.recommender.set_goal(self.target, self.session.mood)
 
         def run():
             try:
@@ -239,19 +302,17 @@ class Daemon:
 
         self._rec_thread = threading.Thread(target=run, name="recommender", daemon=True)
         self._rec_thread.start()
+        return True
 
     def _apply_rec(self) -> None:
-        """Hand a finished pool to the session (a small pool keeps the static catalog in charge)."""
+        """Hand the latest pool to the session (the catalog only keeps the music going)."""
         if not self._rec_ready or self.session is None:
             return
         self._rec_ready = False
         pool = self.recommender.table()
-        if len(pool) >= self.recommender.params.min_pool:
-            self.session.use_tables(pool, self.recommender.languages, self._catalog_table)
-            log.info("session now picks from %d songs matching your taste (%s)", len(pool),
-                     ", ".join(self.recommender.language_names()))
-        else:
-            self.session.use_tables(self._catalog_table)
+        self.session.use_tables(pool, self.recommender.languages, self._catalog_table)
+        log.info("song pool: %d songs matching your taste (%s)", len(pool),
+                 ", ".join(self.recommender.language_names()) or "languages not known yet")
 
     # ------------------------------------------------------------- state for the UI
     def state(self) -> dict[str, Any]:
@@ -274,6 +335,7 @@ class Daemon:
             "mode": "session" if self.session is not None else "queue",
             "session": None if self.session is None else {
                 "status": self.session.status,
+                "preparing": self.session.preparing,
                 "queue_size": self.session.queue_size,
                 "last_added": self.session.last_added,
                 "last_removed": self.session.last_removed,
@@ -282,6 +344,9 @@ class Daemon:
                 "status": self.recommender.status,
                 "languages": self.recommender.language_names(),
                 "pool": len(self.recommender.table()),
+                "useful": (self.recommender.useful_count(self.session.mood, self.target)
+                           if self.session is not None else 0),
+                "ready_songs": self.recommender.params.ready_songs,
             },
         }
 
@@ -300,11 +365,17 @@ class Daemon:
         next_display = self.clock.now()
         while end is None or self.clock.now() < end:
             now = self.clock.now()
-            if self.recommender is not None:
-                if now >= self._next_rec:
-                    self._start_rec_refresh()
-                    self._next_rec = now + self.recommender.params.refresh_s
+            if self.recommender is not None and not self.paused:
+                s = self.session
+                # Back-to-back refreshes while preparing; sooner than usual when a step found nothing.
+                wants_more = s is not None and s.needs_more_songs and now - self._rec_started_at >= 120
+                if (s is not None and s.preparing) or wants_more or now >= self._next_rec:
+                    if self._start_rec_refresh():
+                        self._next_rec = now + self.recommender.params.refresh_s
+                        if s is not None:
+                            s.needs_more_songs = False
                 self._apply_rec()
+                await self._check_ready()
             if now >= next_poll:
                 result = await self.inference.poll()
                 await self.handle_poll(result)
@@ -319,8 +390,10 @@ class Daemon:
                     self.write_state()
                 next_display = self.clock.now() + self.display.params.step_interval_s
             due = [next_poll, next_display]
-            if self.recommender is not None:
+            if self.recommender is not None and not self.paused:
                 due.append(self._next_rec)
+                if self.session is not None and self.session.preparing:
+                    due.append(self.clock.now() + 2.0)  # check readiness and the refresh thread often
             if self.session is not None and not self.paused:
                 due.append(self._next_cycle)
             if end is not None:

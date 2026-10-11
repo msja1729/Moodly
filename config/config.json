@@ -125,7 +125,8 @@
     "resync_after_edits": true,
     "w_taste": 0.12,
     "w_fresh": 0.03,
-    "pool_max_jump": 0.3
+    "pool_max_jump": 0.3,
+    "prepare_min_upcoming": 2
   },
   "recommender": {
     "enabled": true,
@@ -145,6 +146,8 @@
     "preview_budget": 20,
     "fresh_days": 365,
     "country": "IN",
-    "min_pool": 30
-  }
+    "ready_songs": 15,
+    "prepare_max_s": 600
+  },
+  "session_seq": 0
 }
