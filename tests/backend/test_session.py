@@ -622,6 +622,9 @@ def test_playlist_session_starts_fresh_without_the_users_queue(tmp_config, big_c
     class Rec:  # just enough of the recommender: a Liked Songs source
         custom, source, params = True, {"kind": "liked"}, None
 
+        def source_label(self):
+            return "Liked Songs"
+
         def source_seed(self, k):
             return [(f"spotify:track:{t}", big_catalog[t][0].name, big_catalog[t][0].artists,
                      big_catalog[t][0].duration_ms) for t in liked[:k]]

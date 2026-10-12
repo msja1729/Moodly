@@ -74,6 +74,6 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 - gap 0.68 → 0.05 (92% closed), 7.6 min to ≤ 0.10, 72% of picks toward the target, 1 setback
 - the PNG matches the dashboard
 
-**Tests:** 259 pass. New:
+**Tests:** 261 pass. New:
 - a trial folder and the table of all trials (with averages)
 - names that could escape the folder are refused
