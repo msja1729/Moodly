@@ -15,6 +15,15 @@ After the reference design (Glass design UI.jpg). Top to bottom:
 The glass itself (tint, dark diagonal band, border) is painted by the window
 (frontend.app.GlassWindow) in `mood_color(current mood)`, which glides as the
 mood moves.
+
+Pointer effects (they only run while the pointer is over the sidebar):
+    rows       the glass pill fades in on hover, a soft light follows the pointer
+               inside it, the icon nudges right, a click sends a ripple out
+    selection  the target's pill and edge bar slide to a newly chosen mood
+    mood map   a crosshair with the mood under the pointer ("happy · energetic");
+               the current-mood dot pulses gently
+(The light that follows the pointer across the glass and the edge shine are in
+frontend.app.GlassWindow.)
 """
 from __future__ import annotations
 
@@ -22,8 +31,9 @@ import math
 import time
 from typing import Any, Mapping
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen, QRadialGradient
+from PyQt6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation, pyqtSignal
+from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen,
+                         QRadialGradient)
 from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
                              QWidget)
 
@@ -71,6 +81,25 @@ def mood_color(point) -> QColor:
     strength = min(1.0, math.hypot(dv, de) / 0.5)
     c = QColor.fromHsvF(hue / 360, 0.42 + 0.38 * strength, 0.66)
     return QColor(c.red(), c.green(), c.blue())  # plain 8-bit RGB, so equal colours compare equal
+
+
+def describe(point) -> str:
+    """Words for a mood point: "happy · energetic", "sad · calm", "neutral · steady", ..."""
+    v, e = point
+    feel = "sad" if v < 0.35 else "happy" if v > 0.65 else "neutral"
+    energy = "calm" if e < 0.35 else "energetic" if e > 0.65 else "steady"
+    return f"{feel} · {energy}"
+
+
+def fade(duration_ms: int, on_value, parent) -> QVariantAnimation:
+    """A 0..1 animation (eased) that calls `on_value(t)` on every frame."""
+    anim = QVariantAnimation(parent)
+    anim.setDuration(duration_ms)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    anim.valueChanged.connect(on_value)
+    return anim
 
 
 def blend(a: QColor, b: QColor, t: float) -> QColor:
@@ -155,9 +184,15 @@ class ProgressBar(QWidget):
 
 
 class GlassRow(QAbstractButton):
-    """A menu row: glyph + label. Checked = lighter glass pill, a white bar on the panel edge, a chevron."""
+    """A menu row: glyph + label.
 
-    INSET = 14  # the pill starts this far from the panel edge; the bar sits in this gap
+    Hover: a glass pill fades in, a soft light follows the pointer inside it, the icon nudges right.
+    Click: a ripple of light spreads from the click point. The selected mood's pill and edge bar
+    are drawn by the panel underneath (so they can slide between rows); the row adds the bold
+    label, the chevron and the dot.
+    """
+
+    INSET = 14  # the pill starts this far from the panel edge; the edge bar sits in this gap
 
     def __init__(self, glyph: str, text: str, checkable: bool = False, parent: QWidget | None = None):
         super().__init__(parent)
@@ -165,14 +200,26 @@ class GlassRow(QAbstractButton):
         self.setText(text)
         self.setCheckable(checkable)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
         self.setFixedHeight(35)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.marked = False  # a small dot at the right
         self.accent = QColor(DEFAULT_TINT)
-        self._hover = False
+        self.hover = 0.0     # 0..1, animated
+        self.mouse: QPointF | None = None
+        self.ripple = 1.0    # 0..1 while a ripple runs (1 = none)
+        self.ripple_at = QPointF()
+        self._hover_anim = QVariantAnimation(self)
+        self._hover_anim.setDuration(200)
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim.valueChanged.connect(self._set_hover)
+        self._ripple_anim = fade(480, self._set_ripple, self)
 
     def sizeHint(self) -> QSize:
         return QSize(200, 35)
+
+    def pill(self) -> QRectF:
+        return QRectF(self.INSET, 2, self.width() - 2 * self.INSET, self.height() - 4)
 
     def set_marked(self, marked: bool) -> None:
         if marked != self.marked:
@@ -183,45 +230,92 @@ class GlassRow(QAbstractButton):
         self.accent = QColor(color)
         self.update()
 
-    def enterEvent(self, event) -> None:
-        self._hover = True
+    # ------------------------------------------------------------- pointer effects
+    def _set_hover(self, value) -> None:
+        self.hover = float(value)
         self.update()
+
+    def _set_ripple(self, value) -> None:
+        self.ripple = float(value)
+        self.update()
+
+    def _animate_hover(self, to: float) -> None:
+        self._hover_anim.stop()
+        self._hover_anim.setStartValue(self.hover)
+        self._hover_anim.setEndValue(to)
+        self._hover_anim.start()
+
+    def enterEvent(self, event) -> None:
+        self._animate_hover(1.0)
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        self._hover = False
-        self.update()
+        self.mouse = None
+        self._animate_hover(0.0)
         super().leaveEvent(event)
 
+    def mouseMoveEvent(self, event) -> None:
+        self.mouse = event.position()
+        self.update()
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        self.ripple_at = event.position()
+        self._ripple_anim.stop()
+        self._ripple_anim.start()
+        super().mousePressEvent(event)
+
+    # ------------------------------------------------------------- painting
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pill = QRectF(self.INSET, 2, self.width() - 2 * self.INSET, self.height() - 4)
+        pill = self.pill()
         on = self.isChecked()
-        if on or self._hover:
+        h = self.hover
+        if h > 0.01 and not on:  # the hover pill (the selected one is drawn by the panel)
             g = QLinearGradient(pill.topLeft(), pill.topRight())
-            a = QColor(255, 255, 255, 46 if on else 20)
-            b = blend(QColor(255, 255, 255, 18 if on else 8), self.accent, 0.25)
-            g.setColorAt(0, a)
-            g.setColorAt(1, b)
-            p.setPen(QPen(QColor(255, 255, 255, 40 if on else 18), 1))
+            g.setColorAt(0, QColor(255, 255, 255, round(24 * h)))
+            g.setColorAt(1, blend(QColor(255, 255, 255, round(8 * h)), self.accent, 0.25))
+            p.setPen(QPen(QColor(255, 255, 255, round(22 * h)), 1))
             p.setBrush(g)
             p.drawRoundedRect(pill, 11, 11)
-        if on:
+        if h > 0.01 and self.mouse is not None:  # a soft light that follows the pointer inside the pill
+            light = QRadialGradient(self.mouse, pill.height() * 2.2)
+            light.setColorAt(0, QColor(255, 255, 255, round(48 * h)))
+            light.setColorAt(1, QColor(255, 255, 255, 0))
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(pill, 11, 11)
+            p.setClipPath(clip)
+            p.fillRect(pill, light)
+            p.restore()
+        if self.ripple < 1.0:  # a ring of light spreading from the click
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(pill, 11, 11)
+            p.setClipPath(clip)
+            radius = pill.width() * 1.1 * self.ripple
+            ring = QRadialGradient(self.ripple_at, max(radius, 1.0))
+            alpha = round(110 * (1 - self.ripple))
+            ring.setColorAt(0.0, QColor(255, 255, 255, alpha // 3))
+            ring.setColorAt(0.85, QColor(255, 255, 255, alpha))
+            ring.setColorAt(1.0, QColor(255, 255, 255, 0))
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 235))
-            p.drawRoundedRect(QRectF(0, pill.top() + 6, 3, pill.height() - 12), 1.5, 1.5)
+            p.setBrush(ring)
+            p.drawEllipse(self.ripple_at, radius, radius)
+            p.restore()
 
-        text = QColor(255, 255, 255, 250 if on else 185)
-        p.setPen(text)
+        nudge = 3.0 * h
+        p.setPen(QColor(255, 255, 255, 250 if on else round(185 + 50 * h)))
         f = QFont(self.font())
         f.setPointSizeF(12.5)
         p.setFont(f)
-        p.drawText(QRectF(pill.left() + 10, pill.top(), 24, pill.height()), Qt.AlignmentFlag.AlignCenter, self.glyph)
+        p.drawText(QRectF(pill.left() + 10 + nudge, pill.top(), 24, pill.height()), Qt.AlignmentFlag.AlignCenter,
+                   self.glyph)
         f.setPointSizeF(10.5)
         f.setWeight(QFont.Weight.DemiBold if on else QFont.Weight.Normal)
         p.setFont(f)
-        p.drawText(QRectF(pill.left() + 44, pill.top(), pill.width() - 80, pill.height()),
+        p.drawText(QRectF(pill.left() + 44 + nudge * 0.5, pill.top(), pill.width() - 80, pill.height()),
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
         right = pill.right() - 18
         if on:
@@ -246,14 +340,25 @@ class MoodTile(GlassRow):
 
 
 class MoodMap(QWidget):
-    """Valence (x) vs energy (y): the current mood (white), the target (tinted) and the gap."""
+    """Valence (x) vs energy (y): the current mood (white, gently pulsing), the target (tinted), the gap.
+
+    Hovering shows a crosshair and the mood under the pointer ("happy · energetic").
+    """
+
+    MARGIN = 10
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setFixedHeight(112)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.CrossCursor)
         self.mood: tuple[float, float] | None = None
         self.target: tuple[float, float] | None = None
         self.color = QColor(DEFAULT_TINT)
+        self.hover_point: tuple[float, float] | None = None  # mood space point under the pointer
+        self._mouse: QPointF | None = None
+        self._pulse = QTimer(self)  # the mood dot breathes while the sidebar is open
+        self._pulse.timeout.connect(self.update)
 
     def set_state(self, mood, target, color) -> None:
         self.mood = tuple(mood) if mood else None
@@ -261,12 +366,43 @@ class MoodMap(QWidget):
         self.color = QColor(color)
         self.update()
 
+    def area(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(1, 1, -1, -14)
+
+    def to_px(self, pt) -> QPointF:
+        a, m = self.area(), self.MARGIN
+        return QPointF(a.left() + m + pt[0] * (a.width() - 2 * m), a.bottom() - m - pt[1] * (a.height() - 2 * m))
+
+    def to_point(self, px: QPointF) -> tuple[float, float]:
+        a, m = self.area(), self.MARGIN
+        v = (px.x() - a.left() - m) / (a.width() - 2 * m)
+        e = (a.bottom() - m - px.y()) / (a.height() - 2 * m)
+        return (min(max(v, 0.0), 1.0), min(max(e, 0.0), 1.0))
+
+    def showEvent(self, event) -> None:
+        self._pulse.start(40)
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._pulse.stop()
+        super().hideEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        self._mouse = event.position()
+        self.hover_point = self.to_point(self._mouse) if self.area().contains(self._mouse) else None
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        self._mouse = self.hover_point = None
+        self.update()
+        super().leaveEvent(event)
+
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        area = QRectF(self.rect()).adjusted(1, 1, -1, -14)
-        p.setPen(QPen(QColor(255, 255, 255, 46), 1))
-        p.setBrush(QColor(255, 255, 255, 16))
+        area = self.area()
+        p.setPen(QPen(QColor(255, 255, 255, 46 if self.hover_point is None else 70), 1))
+        p.setBrush(QColor(255, 255, 255, 16 if self.hover_point is None else 24))
         p.drawRoundedRect(area, 12, 12)
         p.setPen(QPen(QColor(255, 255, 255, 20), 1))
         for k in range(1, 4):
@@ -285,13 +421,8 @@ class MoodMap(QWidget):
         p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "happy")
 
-        def to_px(pt):
-            m = 10
-            return QPointF(area.left() + m + pt[0] * (area.width() - 2 * m),
-                           area.bottom() - m - pt[1] * (area.height() - 2 * m))
-
         if self.target:
-            t = to_px(self.target)
+            t = self.to_px(self.target)
             glow = QRadialGradient(t, 18)
             c = QColor(self.color)
             c.setAlpha(150)
@@ -304,18 +435,42 @@ class MoodMap(QWidget):
             p.setBrush(self.color)
             p.drawEllipse(t, 5.5, 5.5)
         if self.mood:
-            m = to_px(self.mood)
+            m = self.to_px(self.mood)
             if self.target:
                 p.setPen(QPen(QColor(255, 255, 255, 110), 1.2, Qt.PenStyle.DashLine))
-                p.drawLine(m, to_px(self.target))
-            halo = QRadialGradient(m, 12)
-            halo.setColorAt(0, QColor(255, 255, 255, 120))
+                p.drawLine(m, self.to_px(self.target))
+            breath = 0.5 + 0.5 * math.sin(time.monotonic() * 2 * math.pi / 1.8)  # one breath every 1.8 s
+            r = 11 + 5 * breath
+            halo = QRadialGradient(m, r)
+            halo.setColorAt(0, QColor(255, 255, 255, round(90 + 60 * breath)))
             halo.setColorAt(1, QColor(255, 255, 255, 0))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(halo)
-            p.drawEllipse(m, 12, 12)
+            p.drawEllipse(m, r, r)
             p.setBrush(QColor("white"))
             p.drawEllipse(m, 4.5, 4.5)
+
+        if self.hover_point is not None and self._mouse is not None:  # crosshair + the mood under the pointer
+            c = self.to_px(self.hover_point)
+            p.setPen(QPen(QColor(255, 255, 255, 90), 1, Qt.PenStyle.DotLine))
+            p.drawLine(QPointF(area.left() + 4, c.y()), QPointF(area.right() - 4, c.y()))
+            p.drawLine(QPointF(c.x(), area.top() + 4), QPointF(c.x(), area.bottom() - 4))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, 220))
+            p.drawEllipse(c, 2.5, 2.5)
+            text = f"{describe(self.hover_point)}  {self.hover_point[0]:.2f}, {self.hover_point[1]:.2f}"
+            f.setPointSizeF(8)
+            p.setFont(f)
+            fm = QFontMetrics(f)
+            tw, th = fm.horizontalAdvance(text) + 14, fm.height() + 6
+            x = min(max(c.x() + 10, area.left() + 4), area.right() - tw - 4)
+            y = c.y() - th - 8 if c.y() - th - 8 > area.top() + 2 else c.y() + 8
+            box = QRectF(x, y, tw, th)
+            p.setPen(QPen(QColor(255, 255, 255, 70), 1))
+            p.setBrush(QColor(10, 6, 10, 150))
+            p.drawRoundedRect(box, th / 2, th / 2)
+            p.setPen(QColor(255, 255, 255, 235))
+            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
 
 class IconButton(QAbstractButton):
@@ -441,6 +596,7 @@ class SidebarPanel(QWidget):
         padded(section_label("Moods"), 0, 4)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
+        self.group.buttonToggled.connect(lambda _b, checked: checked and self._move_selection(animate=True))
         self.tiles: dict[str, MoodTile] = {}
         for key, mood in moods.items():
             tile = MoodTile(key, mood)
@@ -493,6 +649,12 @@ class SidebarPanel(QWidget):
 
         self.set_session(False)
         self.set_account(None)
+        # The target's glass pill + edge bar, drawn under the rows so it can slide between them.
+        self.selection = QRectF()
+        self._slide = QVariantAnimation(self)
+        self._slide.setDuration(320)
+        self._slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._slide.valueChanged.connect(self._set_selection)
         self._clock = QTimer(self)  # moves the progress bar between daemon updates
         self._clock.timeout.connect(self._tick)
         self._clock.start(250)
@@ -532,7 +694,53 @@ class SidebarPanel(QWidget):
                 row.set_accent(self.tint)
             self.avatar.accent = self.tint
             self.avatar.update()
+            self.update()  # the selected pill is tinted too
             self.tintChanged.emit(self.tint)
+
+    # ------------------------------------------------------------- the sliding selection
+    def _selection_target(self) -> QRectF:
+        tile = next((t for t in self.tiles.values() if t.isChecked()), None)
+        if tile is None:
+            return QRectF()
+        return tile.pill().translated(QPointF(tile.geometry().topLeft()))
+
+    def _set_selection(self, rect) -> None:
+        self.selection = QRectF(rect)
+        self.update()
+
+    def _move_selection(self, animate: bool) -> None:
+        target = self._selection_target()
+        self._slide.stop()
+        if animate and self.isVisible() and not self.selection.isNull() and not target.isNull():
+            self._slide.setStartValue(QRectF(self.selection))
+            self._slide.setEndValue(target)
+            self._slide.start()
+        else:
+            self._set_selection(target)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        QTimer.singleShot(0, lambda: self._move_selection(animate=False))  # after the layout settles
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, lambda: self._move_selection(animate=False))
+
+    def paintEvent(self, _event) -> None:
+        if self.selection.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pill = self.selection
+        g = QLinearGradient(pill.topLeft(), pill.topRight())
+        g.setColorAt(0, QColor(255, 255, 255, 46))
+        g.setColorAt(1, blend(QColor(255, 255, 255, 18), self.tint, 0.25))
+        p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+        p.setBrush(g)
+        p.drawRoundedRect(pill, 11, 11)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255, 235))
+        p.drawRoundedRect(QRectF(0, pill.top() + 6, 3, pill.height() - 12), 1.5, 1.5)
 
     # ------------------------------------------------------------- state from the daemon
     def show_state(self, state: Mapping[str, Any] | None, target_key: str) -> None:

@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M18 · Real glass: transparent, blurred background, round corners (at the end, after the summary).
+**Latest:** M19 · Pointer effects (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M17)
+## Summary of earlier modifications (M1–M18)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -27,35 +27,39 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M15 | 10-11 | **Session buttons and a song pool prepared per session** | Before the pool was ready, and when it had nothing near a step, random catalog songs (any language) were added; sessions started on their own. | Sidebar: Start session (at launch), End session, New session. On start, new session and every target change the session "prepares": nothing is added until the pool holds 15 useful songs (max 10 min; 2 songs kept ahead so music never stops). The pool is aimed at the goal (songs leading away are pruned); no catalog songs for mood steps; the pool is cleared from disk at session end. 222 tests. |
 | M16 | 10-11 | **Release 0.2.0 for Windows and Mac** | M14–M15 were only on `dev`; no Mac installer. | Mac support (data in `~/Library/Application Support`, VS Code path per platform, sidebar under the menu bar); `build_mac.sh` + GitHub workflow build Apple silicon and Intel `.dmg` files on release; config with a BOM accepted; `dev` merged into `main`, `v0.2.0` released with plain-language notes. 224 tests. |
 | M17 | 10-12 | **Live sidebar and glass design that follows the mood** | Song, mood dot and details lagged up to a minute and weren't in sync; the sidebar didn't match the reference glass design. | Spotify polled every 3 s (and right after a song ends); mood re-averaged when a song starts; `state.json` written at once on visible changes and watched by the UI; live progress bar. Sidebar rebuilt after `Glass design UI.jpg` (rows with glass pill + edge bar + chevron, account row); tint follows the mood (amber/rose/violet/teal) and glides. 228 tests. |
+| M18 | 10-12 | **Real glass: transparent, blurred background, round corners** | Square edges and thick, opaque glass: the Windows Acrylic call painted black behind Qt's transparent window, in a full rectangle. | Acrylic call removed; a snapshot of the screen behind the sidebar is taken as it opens, blurred and drawn under thinner glass (tint alpha 125/80/70). Same on Windows and macOS; checked on screen. 229 tests. |
 
 ---
 
-## M18 · Real glass: transparent, blurred background, round corners · 2026-10-12 · `🆕 LATEST`
+## M19 · Pointer effects · 2026-10-12 · `🆕 LATEST`
 
-**Problems (seen on screen):**
-1. Square edges showed around the rounded corners.
-2. The glass looked thick and opaque instead of transparent with the background blurred.
+**Request:** the sidebar should react to the mouse the way modern websites do. The user confirmed the proposed set: effects 1–5 and 7 (not the 3D tilt or particles).
 
-**Cause (found by capturing the sidebar on screen over a colourful background):** the Windows Acrylic call (`SetWindowCompositionAttribute`) doesn't blur behind Qt's transparent windows here. It paints **black** across the window's full **rectangle**. That black, under the painted glass (70–85% opaque), was both the thick look and the square corners. Clipping the window to a rounded mask didn't help.
+**Modifications:**
+1. **Light that follows the pointer** (`frontend/app.py`, `GlassWindow`):
+   - while the sidebar is open, a 16 ms timer reads the pointer (`track()`)
+   - the light's position follows with a little lag (32% per frame) and its strength fades in and out (16% per frame)
+   - painted as a radial glow in the mood colour (radius 230, alpha up to 115) over the glass
+   - the timer stops when the sidebar hides
+2. **Edge shine:** a second border stroke with a radial pen at the light's position (radius 200, 2.4 px), so the edge brightens nearest the pointer.
+3. **Row hover, light and ripple** (`frontend/components.py`, `GlassRow`):
+   - the hover pill fades in and out (200 ms, eased)
+   - a soft light follows the pointer inside the pill, clipped to it
+   - the icon nudges 3 px right and the label 1.5 px
+   - a click sends out a ripple ring from the click point (480 ms)
+4. **Sliding selection** (`SidebarPanel`): the selected mood's pill and edge bar are drawn by the panel under the rows and slide to the new row (320 ms, out-cubic). Before, each row drew its own and the selection jumped.
+5. **Mood map** (`MoodMap`):
+   - hovering shows a dotted crosshair and a label with the mood under the pointer (`describe()`: "happy · energetic", plus coordinates)
+   - the current-mood dot breathes (halo pulse every 1.8 s, 40 ms timer, only while shown)
+6. **Docs:** SPEC (pointer effects, acceptance criterion), MANUAL (controls table).
 
-**Modifications** (`frontend/app.py`):
-1. **Acrylic call removed** (`enable_acrylic`); no DWM corner preference.
-2. **Own blur:**
-   - `GlassWindow.capture_backdrop()` snapshots the screen where the sidebar will appear, while it is still hidden (`show_sidebar()` calls it before `show()`).
-   - `blur_pixmap()` blurs the snapshot: shrink by ~7×, then 2×, then scale back up smoothly.
-   - `paintEvent` draws the snapshot first, so what's behind shows through, blurred. This works the same on Windows and macOS (on macOS without the Screen Recording permission the snapshot holds only the wallpaper).
-3. **Thinner glass** over the blur:
-   - tint alpha 125 → 80 → 70 from top to bottom (was 215 → 175 → 170)
-   - diagonal bands 80/40 (was 120/60)
-   - without a snapshot, +95 alpha so text stays readable
-4. **Round corners only:** everything is painted inside the rounded path, and nothing fills the rectangle behind it.
+**Checked on screen:** with a simulated pointer over the reference backdrop, the light glows in the mood colour, the hovered row has its pill, light and ripple, the map shows "happy · steady 0.79, 0.62", and the selected pill stays on Calm with its edge bar. The light was made stronger after the first capture (alpha 70 → 115).
 
-**Checked on screen:**
-- the sidebar over the reference image in Calm and Energized (`docs/sidebar.png`)
-- the background shows through, blurred, with round corners and no square edges
-- the tint is still visible and the text is readable
-
-**Tests:** 229 pass (new: the blur softens a sharp pattern; opening the sidebar takes a snapshot first).
+**Tests:** 232 pass. New:
+- the light follows the pointer with lag, fades to 0 when the pointer leaves, and its timer stops when the sidebar hides
+- the hover pill fades in and out, a click starts a ripple that completes
+- the selection slides from Focused to Wind Down (in between mid-way, then exactly on target)
+- the map names the mood under the pointer, the label clears on leave, and the pulse runs only while shown
 
 **Not done / limits:**
-- The blurred background is a snapshot from when the sidebar opens: something moving behind it (a video) isn't updated until it is reopened. The sidebar is a short-lived flyout, which keeps this acceptable.
+- Effects are drawn in software: around 60 repaints a second while the pointer moves over the open sidebar, and none when it's still or closed.

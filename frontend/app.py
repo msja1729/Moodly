@@ -12,7 +12,9 @@ the current mood that glides to each new colour, a dark diagonal band, a soft
 highlight and a thin bright border. Mood clicks write config.json directly
 (atomic replace), which the daemon picks up. The sidebar re-reads
 data/state.json the moment the daemon replaces it (file watcher), so the song,
-progress and mood dot change together.
+progress and mood dot change together. While the pointer is over the sidebar,
+a soft light in the mood colour follows it across the glass and the border
+shines nearest to it (see also the row and map effects in components.py).
 """
 from __future__ import annotations
 
@@ -25,8 +27,8 @@ from pathlib import Path
 from typing import Callable
 
 from PyQt6.QtCore import QEvent, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer
-from PyQt6.QtGui import (QAction, QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPainterPath, QPen,
-                         QPixmap, QRadialGradient)
+from PyQt6.QtGui import (QAction, QColor, QCursor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPainterPath,
+                         QPen, QPixmap, QRadialGradient)
 from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
 from frontend.components import DEFAULT_TINT, SidebarPanel, blend
@@ -81,6 +83,38 @@ class GlassWindow(QWidget):
         self._glide.timeout.connect(self._glide_step)
         panel.tintChanged.connect(self.set_tint)
         panel.closeRequested.connect(self.hide)
+        # The light that follows the pointer: position (smoothed) and strength (fades in/out).
+        self.light_pos = QPointF(-1000, -1000)
+        self.light = 0.0
+        self._pointer = QTimer(self)  # runs only while the sidebar is open
+        self._pointer.timeout.connect(self._follow_pointer)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._pointer.start(16)
+
+    def hideEvent(self, event) -> None:
+        self._pointer.stop()
+        self.light = 0.0
+        super().hideEvent(event)
+
+    def _follow_pointer(self) -> None:
+        self.track(QPointF(self.mapFromGlobal(QCursor.pos())))
+
+    def track(self, pos: QPointF) -> None:
+        """One animation step toward the pointer at `pos` (window coordinates)."""
+        inside = QRectF(self.rect()).contains(pos)
+        if inside and self.light < 0.02:
+            self.light_pos = QPointF(pos)  # appear where the pointer is, don't fly in
+        before = (self.light, self.light_pos.x(), self.light_pos.y())
+        self.light += ((1.0 if inside else 0.0) - self.light) * 0.16
+        if inside:
+            self.light_pos += (pos - self.light_pos) * 0.32  # a little lag feels like liquid light
+        if self.light < 0.005:
+            self.light = 0.0
+        if abs(self.light - before[0]) > 0.002 or abs(self.light_pos.x() - before[1]) > 0.3 \
+                or abs(self.light_pos.y() - before[2]) > 0.3:
+            self.update()
 
     def set_tint(self, color: QColor) -> None:
         """Glide from the current tint to `color`."""
@@ -163,7 +197,16 @@ class GlassWindow(QWidget):
         glow.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.fillPath(path, glow)
 
-        # 4. A thin bright edge, slightly tinted.
+        # 4. The light that follows the pointer, in the mood colour.
+        if self.light > 0:
+            spot = QRadialGradient(self.light_pos, 230)
+            core = self.tint.lighter(165)
+            spot.setColorAt(0.0, QColor(core.red(), core.green(), core.blue(), round(115 * self.light)))
+            spot.setColorAt(0.4, QColor(255, 255, 255, round(30 * self.light)))
+            spot.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.fillPath(path, spot)
+
+        # 5. A thin bright edge, slightly tinted, shining brighter nearest the pointer.
         p.setClipping(False)
         edge = QLinearGradient(0, 0, w, h)
         edge.setColorAt(0.0, QColor(255, 255, 255, 120))
@@ -171,6 +214,12 @@ class GlassWindow(QWidget):
         edge.setColorAt(1.0, QColor(255, 255, 255, 90))
         p.setPen(QPen(edge, 1.2))
         p.drawPath(path)
+        if self.light > 0:
+            shine = QRadialGradient(self.light_pos, 200)
+            shine.setColorAt(0.0, QColor(255, 255, 255, round(235 * self.light)))
+            shine.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.setPen(QPen(shine, 2.4))
+            p.drawPath(path)
 
     def event(self, e) -> bool:
         if e.type() == QEvent.Type.WindowDeactivate and self.isVisible():

@@ -257,3 +257,89 @@ def test_glass_blurs_what_is_behind(qtbot, tray_app):
     qtbot.waitExposed(tray_app.window)
     assert tray_app.window.backdrop is None or not tray_app.window.backdrop.isNull()
     assert not tray_app.window.grab().isNull()
+
+
+# ----------------------------------------------------------------- pointer effects
+
+def test_light_follows_the_pointer_and_fades_out(qtbot, tray_app):
+    from PyQt6.QtCore import QPointF
+
+    w = tray_app.window
+    tray_app.show_sidebar()
+    qtbot.waitExposed(w)
+    w._pointer.stop()  # drive it by hand
+    for _ in range(40):
+        w.track(QPointF(120, 300))
+    assert w.light > 0.95 and abs(w.light_pos.x() - 120) < 1 and abs(w.light_pos.y() - 300) < 1
+    for _ in range(5):
+        w.track(QPointF(200, 300))
+    assert 120 < w.light_pos.x() < 200  # glides after the pointer (a little lag)
+    for _ in range(80):
+        w.track(QPointF(-50, -50))  # pointer left the sidebar
+    assert w.light == 0.0
+    w.hide()
+    assert not w._pointer.isActive()  # nothing runs while the sidebar is closed
+
+
+def test_row_hover_ripple_and_sliding_selection(qtbot, tray_app):
+    from PyQt6.QtCore import QEvent, QPointF
+    from PyQt6.QtGui import QEnterEvent
+
+    tray_app.show_sidebar()
+    qtbot.waitExposed(tray_app.window)
+    panel = tray_app.panel
+    row = panel.tiles["calm"]
+    row.enterEvent(QEnterEvent(QPointF(40, 15), QPointF(40, 15), QPointF(40, 15)))
+    qtbot.waitUntil(lambda: row.hover > 0.99, timeout=1000)  # the pill fades in
+    row.leaveEvent(QEvent(QEvent.Type.Leave))
+    qtbot.waitUntil(lambda: row.hover < 0.01, timeout=1000)  # and out
+
+    qtbot.mousePress(row, Qt.MouseButton.LeftButton, pos=QPointF(60, 15).toPoint())
+    assert row._ripple_anim.state() == row._ripple_anim.State.Running
+    qtbot.waitUntil(lambda: row.ripple > 0.99, timeout=1000)
+    qtbot.mouseRelease(row, Qt.MouseButton.LeftButton, pos=QPointF(60, 15).toPoint())
+
+    tray_app.timer.stop()  # keep the app's refresh from re-selecting the configured mood meanwhile
+    tray_app._debounce.stop()
+    tray_app.watcher.blockSignals(True)
+    qtbot.waitUntil(lambda: not panel.selection.isNull(), timeout=1000)
+    panel.set_selected("focused")
+    qtbot.waitUntil(lambda: panel.selection == panel._selection_target(), timeout=1000)
+    start = panel.selection.top()
+    panel.set_selected("wind_down")      # slides from Focused down to Wind Down
+    target = panel._selection_target()
+    qtbot.wait(60)
+    assert start < panel.selection.top() < target.top()  # on its way
+    qtbot.waitUntil(lambda: panel.selection == target, timeout=1000)
+
+
+def test_mood_map_hover_shows_the_mood_under_the_pointer(qtbot):
+    from PyQt6.QtCore import QPointF
+
+    from frontend.components import MoodMap, describe
+
+    assert describe((0.9, 0.9)) == "happy · energetic"
+    assert describe((0.1, 0.1)) == "sad · calm"
+    assert describe((0.5, 0.5)) == "neutral · steady"
+    m = MoodMap()
+    qtbot.addWidget(m)
+    m.resize(280, 112)
+    m.set_state((0.3, 0.3), (0.6, 0.25), "#4FC1A6")
+    m.show()
+    qtbot.waitExposed(m)
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtWidgets import QApplication
+
+    corner = m.to_px((0.8, 0.9))
+    move = QMouseEvent(QEvent.Type.MouseMove, corner, m.mapToGlobal(corner), Qt.MouseButton.NoButton,
+                       Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(m, move)
+    assert m.hover_point is not None
+    assert abs(m.hover_point[0] - 0.8) < 0.02 and abs(m.hover_point[1] - 0.9) < 0.02
+    assert not m.grab().isNull()
+    m.leaveEvent(QEvent(QEvent.Type.Leave))
+    assert m.hover_point is None
+    assert m._pulse.isActive()  # the mood dot breathes while shown
+    m.hide()
+    assert not m._pulse.isActive()

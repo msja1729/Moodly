@@ -16,6 +16,11 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
         *   The richness is set by the distance from neutral.
         *   The tint glides to each new colour over ~0.9 s.
         *   The selected row, the target dot and the avatar pick up the tint.
+    *   **Pointer effects** (only while the pointer is over the sidebar; nothing runs while it is closed):
+        *   **Pointer light:** a soft light in the mood colour follows the pointer across the glass (smoothed, fades in and out), and the border shines brightest nearest the pointer.
+        *   **Rows:** the glass pill fades in on hover (200 ms), a light follows the pointer inside it, the icon nudges right, and a click sends a ripple of light out from the click point (480 ms).
+        *   **Selection:** the target's pill and edge bar slide to a newly chosen mood (320 ms, eased).
+        *   **Mood map:** a crosshair with the mood under the pointer ("happy · energetic", with coordinates); the current-mood dot breathes (one pulse every 1.8 s).
     *   **In sync, on the spot:** the song, artist, progress and mood dot change together as soon as the song changes. The daemon polls Spotify every 3 s while music plays and right after the song is due to end. On a song change it re-averages the mood at once from the remaining window, without waiting for a cycle. It writes `data/state.json` immediately when anything visible changes (otherwise every 10 s). The sidebar redraws when that file is replaced (file watcher), and moves the progress bar itself between updates.
 *   **Backend (The Daemon):** A headless Python process managing the Spotify polling, Markov chain math, and environment actuators.
 *   **Inter-Process Communication:** The frontend UI writes the user's selected mood to `config.json`. The backend daemon uses a file watcher to instantly detect updates to this file and adjust its target coordinates on the fly.
@@ -123,6 +128,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   **Frontend (Log out):** Log out deletes only the active account's saved token, removes it from the list, and shows the account window again; closing that window quits the app.
 *   **Frontend:** The UI successfully launches as a system tray icon and opens a frameless, frosted-glass sidebar menu when clicked.
 *   **Frontend (Sync):** A song change (natural or skipped) appears in the sidebar within ~3 s: song, artist, progress bar and mood dot together; a new `state.json` is shown without waiting for the UI's timer.
+*   **Frontend (Pointer effects):** While the pointer is over the sidebar, a light follows it and fades out when it leaves; rows fade their hover pill in and out and ripple on click; the selection slides between moods; the mood map names the mood under the pointer. No effect runs while the sidebar is closed.
 *   **Frontend (Glass design):** The sidebar follows the reference glass design, fits in 680 px, has only rounded corners, shows the blurred background through thin glass, and its tint follows the current mood (four distinct hues at the four corners of the mood space), gliding between colours.
 *   **Frontend:** Clicking a mood button successfully updates the target coordinates in `config.json` in under 100ms.
 *   **Backend (Inference):** The daemon successfully polls the live Spotify API for the currently playing track and retrieves audio features from the fallback chain without crashing.

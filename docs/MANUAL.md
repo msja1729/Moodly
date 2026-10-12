@@ -208,6 +208,7 @@ SESSION
 
 | Control | What it does |
 |---|---|
+| **Pointer effects** | Move the pointer over the sidebar: a soft light in the mood colour follows it and the edge shines nearest to it. Rows light up as you hover them and ripple when clicked; the selection slides to the mood you pick. Hover the mood map to see which mood each spot means ("happy · energetic"). |
 | **Glass colour** | Follows how your music feels right now: amber when happy and energetic, rose when tense, violet when sad, teal when calm (blends in between). It glides as your mood moves. |
 | **Now playing** | The song, the artist and a live progress bar. They change the moment the song changes (within ~3 s of a skip). |
 | **Mood map** | The white dot is your current mood. The coloured dot is the target. The dashed line is the distance still to go. |
