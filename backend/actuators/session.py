@@ -71,7 +71,7 @@ NOT_PREMIUM = "not_premium"
 class SessionParams:
     cycle_s: float = 90.0            # regular reshaping interval
     min_cycle_gap_s: float = 30.0    # song changes don't trigger cycles more often than this
-    handback_count: int = 10         # songs moved to Spotify's queue when the session ends
+    keep_after_end: int = 0          # session songs that keep playing after the end (0: only the song playing)
     max_initial_items: int = 50
     takeover_grace_s: float = 20.0   # right after hand-over Spotify may still report the old source
     resync_after_edits: bool = True  # replay the playlist (same song, same moment) so Spotify sees the edits
@@ -644,7 +644,7 @@ class PlaylistSession:
                     entries = self.client.playlist_items(self.playlist_id)
                     self._now_key = ps.item.key
                     cur, _ = self._locate(entries, ps.item.uri)
-                    nxt = [it.uri for it in entries[cur + 1: cur + 1 + self.params.handback_count]
+                    nxt = [it.uri for it in entries[cur + 1: cur + 1 + self.params.keep_after_end]
                            if it.kind == "track" and it.key != ps.item.key]
                     progress = ps.progress_ms + int((self.clock.now() - ps.observed_at) * 1000)
                     # Leave the playlist: the same song goes on at the same moment, then the next songs as a
@@ -663,6 +663,15 @@ class PlaylistSession:
 
     def _delete_playlist(self) -> None:
         if self.playlist_id:
+            try:
+                # Empty it first: Spotify can't truly delete a playlist (deleting = unfollowing), and it may
+                # still list it for a while (Home, Recents). Then it has no songs left.
+                entries = self.client.playlist_items(self.playlist_id)
+                uris = list(dict.fromkeys(e.uri for e in entries))
+                if uris:
+                    self.client.playlist_remove(self.playlist_id, uris)
+            except Exception as e:
+                log.debug("could not empty the session playlist: %s", e)
             try:
                 self.client.delete_playlist(self.playlist_id, self.playlist_uri)
             except Exception as e:

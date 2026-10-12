@@ -218,7 +218,7 @@ SESSION
 | **Status line** | The distance to the target, roughly how many songs it will take, the screen temperature, and the session's songs ahead / last changes (or a note such as "Preparing songs for you…"). |
 | **Mood rows** | Click one to set your target. Within a second, the themes switch and the screen starts moving toward that mood's temperature. |
 | **Start session** | Shown when no session runs (always at launch). First asks **where songs should come from** (For you, Liked Songs or one of your playlists) in a popup over the blurred sidebar; picking one starts the session at once (Esc or Cancel: nothing starts). Starts a session: themes and screen follow the target, and the app first prepares a pool of songs for you (your taste, your top-2 languages, the target mood). While it prepares, nothing is added to your music; your own queue keeps playing. Once the pool is ready, it starts adding songs. |
-| **End session** | Ends the session: the next 10 songs go back to your normal queue, the session playlist is deleted, the song pool is cleared from disk, and the screen drifts back to neutral. |
+| **End session** | Ends the session: the song playing finishes, none of the session's songs stay queued (songs you added with Spotify's "Add to queue" stay), the session playlist is emptied and deleted, the song pool is cleared from disk, and the screen drifts back to neutral. |
 | **New session** | Ends the current session (as above) and starts a new one with a fresh song pool. |
 | **⇥ / ⏻** | Log out of Spotify on this computer / Quit the app (ends the session first). |
 
@@ -292,7 +292,7 @@ Edit `config/config.json` in any text editor. Changes to the **target mood** or 
 | `session.search_radius` | `0.08` | How close to the next step a new song must be (widened automatically if needed) |
 | `session.w_tempo`, `w_key`, `w_loudness`, `w_feel` | `0.15`, `0.05`, `0.05`, `0.05` | How much musical fit matters versus mood fit |
 | `session.allow_explicit` | `true` | Set to `false` to never add explicit songs |
-| `session.handback_count` | `10` | Songs that keep playing after a session ends (the current song goes on, then these, without the session playlist) |
+| `session.keep_after_end` | `0` | Session songs that keep playing after a session ends. 0: only the song playing finishes; none of the session's songs stay queued |
 | `audio.deviation_threshold` | `0.2` | Queue mode: how far from the target before bridging starts |
 | `audio.cooldown_s` | `90` | Minimum seconds between bridging tracks |
 | `audio.enabled` | `true` | Set to `false` to turn off queueing completely |

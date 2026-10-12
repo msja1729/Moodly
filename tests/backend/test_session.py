@@ -185,15 +185,19 @@ class TestCycle:
 class TestEnd:
     def test_hand_back_then_delete(self, big_catalog, clock, tmp_path):
         client, _ = playing_client(big_catalog, clock, queued=0)
-        s = make_session(client, big_catalog, clock, tmp_path, handback_count=5)
+        s = make_session(client, big_catalog, clock, tmp_path)
         s.start()
         s.cycle(FOCUSED)
-        nxt = upcoming(client)[:5]
+        pid = s.playlist_id
+        removed = []
+        real_remove = client.playlist_remove
+        client.playlist_remove = lambda p, uris: (removed.extend(uris), real_remove(p, uris))
         playing, queued_before = client.player_state().item.id, list(client.queued_log)
         s.end()
-        assert not s.active and s.status == session_mod.IDLE and client.deleted_playlists
-        # Off the session playlist: the same song goes on, then the next 5 as a plain list; nothing queued.
-        assert client.context is None and client.played_lists[-1] == [playing] + nxt
+        assert not s.active and s.status == session_mod.IDLE and client.deleted_playlists == [pid]
+        assert len(removed) >= 10  # emptied before it was deleted
+        # Off the session playlist: only the song playing goes on; none of the session's songs stay queued.
+        assert client.context is None and client.played_lists[-1] == [playing]
         assert client.player_state().item.id == playing and client.queued_log == queued_before
         assert not (tmp_path / "session.json").exists()
         clock.advance(3600)

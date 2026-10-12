@@ -133,7 +133,7 @@ The daemon runs as a separate background process and logs to `data/daemon.log`. 
 
 Only one live daemon can run at a time; a second one exits with a message.
 
-Play something in Spotify, click the tray icon to open the sidebar, pick **Focused / Calm / Energized / Wind Down**, and click **Start session**. The app first prepares a pool of songs for you (nothing is added meanwhile), then starts adding. **End session** (also quitting or logging out) ends it: the next 10 songs go back to your queue, the session playlist is deleted and the song pool is cleared. **New session** ends the current one and starts a fresh one. The UI writes `config/config.json`, and the daemon's file watcher reacts within ~50 ms. The UI shows the live mood estimate from `data/state.json`.
+Play something in Spotify, click the tray icon to open the sidebar, pick **Focused / Calm / Energized / Wind Down**, and click **Start session**. The app first prepares a pool of songs for you (nothing is added meanwhile), then starts adding. **End session** (also quitting or logging out) ends it: the song playing finishes, none of the session's songs stay queued, the session playlist is emptied and deleted, and the song pool is cleared. **New session** ends the current one and starts a fresh one. The UI writes `config/config.json`, and the daemon's file watcher reacts within ~50 ms. The UI shows the live mood estimate from `data/state.json`.
 
 Useful daemon flags:
 
@@ -184,7 +184,7 @@ New songs come from a live **taste pool**: songs by the user's favourite artists
 - `moods.*`: coordinates, VS Code theme, Terminal scheme and Kelvin for each mood.
 - `markov`: `grid_size`, `beta` (pull toward the target), `gamma` (penalty for big jumps).
 - `audio.mode`: `"session"` (default: the playlist session) or `"queue"` (Phase 1: append one bridging track at a time).
-- `session`: `cycle_s` (90), `window_size` (20), `target_length` (15), `min_length` (8), `max_adds_per_cycle` (3), `max_removals_per_cycle` (2), `remove_radius_mood`/`remove_radius_target` (0.35), `search_radius` (0.08), the musical weights `w_tempo`, `w_key`, `w_loudness`, `w_feel`, `w_energy_jump`, `mmr_lambda`, `settle_radius`, `allow_explicit`, `handback_count`.
+- `session`: `cycle_s` (90), `window_size` (20), `target_length` (15), `min_length` (8), `max_adds_per_cycle` (3), `max_removals_per_cycle` (2), `remove_radius_mood`/`remove_radius_target` (0.35), `search_radius` (0.08), the musical weights `w_tempo`, `w_key`, `w_loudness`, `w_feel`, `w_energy_jump`, `mmr_lambda`, `settle_radius`, `allow_explicit`, `keep_after_end`.
 - `audio.deviation_threshold` (default 0.2, queue mode): bridging starts only when the mood is further than this from the target.
 - `audio.cooldown_s`: minimum gap between bridging tracks.
 - `inference`: `ema_alpha`, `skip_weight`, `skip_threshold`, and polling: `poll_min_s` (3 s while music plays) / `poll_max_s` (15 s when paused or idle).

@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M31 · Trial reports saved from the dashboard (at the end, after the summary).
+**Latest:** M32 · End session leaves nothing of the session behind (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M30)
+## Summary of earlier modifications (M1–M31)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -40,40 +40,24 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M28 | 10-12 | **No more lag; popup for where songs come from** | The sidebar/dashboard showed changes late: the backend ran the whole session step before writing the new song, and didn't poll meanwhile. | New song written at once; session steps in the background; refresh only on real state changes; dashboard ETag; Pause/Play retry; Start/New session popup over the blurred sidebar. 252 tests. |
 | M29 | 10-12 | **Only songs from the chosen source; End session leaves the playlist** | Old hand-backs piled up in the user's queue and came back each session; Spotify kept playing the deleted playlist. | A playlist / Liked Songs session starts fresh (the song playing + 2 from the source, no queue, no catalog); End session plays the same song and the next 10 as a plain list. 253 tests. |
 | M30 | 10-12 | **Picks climb toward the target; a steadier mood** | A fresh session filled 11 songs around one step (a plateau that later "pulled away"); the mood was one song, so a sad song dragged picks down. | Staircase refills (2 songs per Markov step, in order); picks must beat both mood and heading; the last 3 heard songs count in the mood; polls retry within 5 s. 257 tests. |
+| M31 | 10-12 | **Trial reports saved from the dashboard** | Wanted the results and graphs of many trials in the repo to compare them. | `reports/trials/<trial>/` with report.html, PNG/SVG graphs, summary.json, trial.json; README.md table with averages; auto-save at session end, Save trial / Save all. 261 tests. |
 
 ---
 
-## M31 · Trial reports saved from the dashboard · 2026-10-12 · `🆕 LATEST` · developer tool
+## M32 · End session leaves nothing of the session behind · 2026-10-12 · `🆕 LATEST`
 
-**Request:** save the dashboard's results and graphs into a folder in the repo, to compare many trials and summarise how well the app does.
+**Problem:** after End session or Quit, the user still saw the session in Spotify:
+- the session's songs lined up in "Next" (M29 kept the song playing plus the next 10 as a plain list)
+- the "Ambient Mood session" playlist itself, in Spotify's sidebar, Home or Recents
+
+**Checked first** (read-only, on the account): no "Ambient Mood session" playlist was left in the library, and nothing was playing from one. Deleting works; what the user saw were the 10 songs kept, and Spotify still showing the deleted playlist. The user confirmed both (asked).
 
 **Modifications:**
-1. **`tools/trial_reports.py`:** writes `reports/trials/<trial>/`. The trial id is `date_time_target_source`, e.g. `2026-10-12_1623_energized_liked-songs`. Each folder has:
-   - `report.html`: the summary table, the four graphs and every step
-   - `plane`, `plane_details`, `gap` and `valence_energy` as `.png` (2× size) and `.svg`
-   - `summary.json`
-   - `trial.json`: the raw trace events
+1. **Only the song playing finishes:**
+   - At the end, Spotify plays just the current song, at the same moment, with no playlist behind it.
+   - None of the session's songs stay queued. The user's own "Add to queue" songs stay, since they're theirs.
+   - The setting is renamed `session.handback_count` (10) → `session.keep_after_end` (0), so settings saved by 0.3.0 don't bring the old 10 back.
+2. **Emptied before deleted:** `_delete_playlist` removes every song, then deletes (unfollows) it. Spotify can't truly delete a playlist, so any entry it still shows is empty. This also applies when the user starts other music and to a playlist left over from a crash.
+3. **Docs:** SPEC, MANUAL, README and the End session tooltip.
 
-   It also rebuilds `reports/trials/README.md`: one row per trial, linked to its report, plus averages. File names are checked, so nothing can be written outside the folder.
-2. **Measurements** (`summary.json`, computed in the dashboard from the trace):
-   - target and song source; minutes
-   - gap at start / end / best, and % of the gap closed
-   - minutes to a gap ≤ 0.10 and ≤ 0.05
-   - **picks toward %**: songs added that were closer to the target than the mood *when they were added*
-   - **setbacks**: the gap grew by more than 0.05 between two steps (and the worst one)
-   - songs played, % skipped, songs added / removed, cycles
-3. **Dashboard** (`tools/mood_trace_view.py`):
-   - "Save trial" saves the session shown, and "Save all trials" saves every ended one not yet saved.
-   - A session that ends while the page is open is saved automatically, and saved sessions are marked in the list.
-   - Server: `POST /save`, `GET /saved.json`, and a `--reports` folder option.
-4. **Trace:** each cycle records the song source, and each finished song whether it was skipped (`ended` events), so the reports can show both.
-5. Docs: SPEC.
-
-**Checked:** saved the live session (Energized, 13 min) from the dashboard into a scratch folder:
-- all 11 files written
-- gap 0.68 → 0.05 (92% closed), 7.6 min to ≤ 0.10, 72% of picks toward the target, 1 setback
-- the PNG matches the dashboard
-
-**Tests:** 261 pass. New:
-- a trial folder and the table of all trials (with averages)
-- names that could escape the folder are refused
+**Tests:** 261 pass. Updated: End session plays only the song playing, empties the playlist (all songs removed), then deletes it.

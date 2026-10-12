@@ -99,7 +99,7 @@
   "session": {
     "cycle_s": 90,
     "min_cycle_gap_s": 30,
-    "handback_count": 10,
+    "keep_after_end": 0,
     "window_size": 20,
     "target_length": 15,
     "min_length": 8,

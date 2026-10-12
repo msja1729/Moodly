@@ -952,7 +952,7 @@ class SidebarPanel(QWidget):
         self.logout = IconButton("⇥", "Log out")
         self.quit = IconButton("⏻", "Quit")
         self.start_session.setToolTip("Start shaping your music toward the chosen mood")
-        self.end_session.setToolTip("End the session: the music goes on with the same song and the next few, the session playlist "
+        self.end_session.setToolTip("End the session: the song playing finishes and none of the session's songs stay queued; the session playlist "
                                     "and the song pool are deleted")
         self.new_session.setToolTip("End this session and start a new one with a fresh song pool")
         for row, signal in ((self.start_session, self.sessionStartRequested),
