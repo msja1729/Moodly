@@ -261,24 +261,28 @@ def test_glass_blurs_what_is_behind(qtbot, tray_app):
 
 # ----------------------------------------------------------------- pointer effects
 
-def test_light_follows_the_pointer_and_fades_out(qtbot, tray_app):
+def test_pointer_leaves_waves_in_the_glass(qtbot, tray_app):
     from PyQt6.QtCore import QPointF
 
     w = tray_app.window
     tray_app.show_sidebar()
     qtbot.waitExposed(w)
     w._pointer.stop()  # drive it by hand
-    for _ in range(40):
-        w.track(QPointF(120, 300))
-    assert w.light > 0.95 and abs(w.light_pos.x() - 120) < 1 and abs(w.light_pos.y() - 300) < 1
-    for _ in range(5):
-        w.track(QPointF(200, 300))
-    assert 120 < w.light_pos.x() < 200  # glides after the pointer (a little lag)
-    for _ in range(80):
-        w.track(QPointF(-50, -50))  # pointer left the sidebar
-    assert w.light == 0.0
+    t = 100.0
+    w.track(QPointF(100, 300), t)
+    assert w.waves == []                      # standing still: no waves
+    for i in range(1, 6):                      # move 40 px at a time (a wave every 38 px)
+        w.track(QPointF(100 + 40 * i, 300), t + 0.05 * i)
+    assert len(w.waves) == 5
+    assert all(0.4 < wave[3] <= 1.0 for wave in w.waves)
+    assert not w.grab().isNull()             # paints with waves alive
+    w.track(QPointF(-50, -50), t + 0.3 + w.WAVE_LIFE)  # pointer gone and the waves have faded
+    assert w.waves == []
+    for i in range(40):                        # a long, fast stroke keeps only the newest waves
+        w.track(QPointF(10 + (i % 2) * 300, 300), t + 10 + 0.01 * i)
+    assert len(w.waves) == w.MAX_WAVES
     w.hide()
-    assert not w._pointer.isActive()  # nothing runs while the sidebar is closed
+    assert not w._pointer.isActive() and w.waves == []  # nothing runs while the sidebar is closed
 
 
 def test_row_hover_ripple_and_sliding_selection(qtbot, tray_app):
@@ -313,33 +317,17 @@ def test_row_hover_ripple_and_sliding_selection(qtbot, tray_app):
     qtbot.waitUntil(lambda: panel.selection == target, timeout=1000)
 
 
-def test_mood_map_hover_shows_the_mood_under_the_pointer(qtbot):
-    from PyQt6.QtCore import QPointF
+def test_mood_map_dot_breathes_only_while_shown(qtbot):
+    from frontend.components import MoodMap
 
-    from frontend.components import MoodMap, describe
-
-    assert describe((0.9, 0.9)) == "happy · energetic"
-    assert describe((0.1, 0.1)) == "sad · calm"
-    assert describe((0.5, 0.5)) == "neutral · steady"
     m = MoodMap()
     qtbot.addWidget(m)
     m.resize(280, 112)
     m.set_state((0.3, 0.3), (0.6, 0.25), "#4FC1A6")
     m.show()
     qtbot.waitExposed(m)
-    from PyQt6.QtCore import QEvent
-    from PyQt6.QtGui import QMouseEvent
-    from PyQt6.QtWidgets import QApplication
-
-    corner = m.to_px((0.8, 0.9))
-    move = QMouseEvent(QEvent.Type.MouseMove, corner, m.mapToGlobal(corner), Qt.MouseButton.NoButton,
-                       Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier)
-    QApplication.sendEvent(m, move)
-    assert m.hover_point is not None
-    assert abs(m.hover_point[0] - 0.8) < 0.02 and abs(m.hover_point[1] - 0.9) < 0.02
+    assert m._pulse.isActive()
+    assert m.cursor().shape() == Qt.CursorShape.ArrowCursor  # no crosshair
     assert not m.grab().isNull()
-    m.leaveEvent(QEvent(QEvent.Type.Leave))
-    assert m.hover_point is None
-    assert m._pulse.isActive()  # the mood dot breathes while shown
     m.hide()
     assert not m._pulse.isActive()

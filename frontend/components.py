@@ -2,7 +2,6 @@
 
 After the reference design (Glass design UI.jpg). Top to bottom:
 
-    ● ● ●                 window dots (red hides the sidebar)
     Ambient Mood          title, then a fading divider
     NOW PLAYING           song, artist, a live progress bar
     [mood map]            current mood (white) -> target (tinted), status line
@@ -17,12 +16,11 @@ The glass itself (tint, dark diagonal band, border) is painted by the window
 mood moves.
 
 Pointer effects (they only run while the pointer is over the sidebar):
-    rows       the glass pill fades in on hover, a soft light follows the pointer
+    rows       the glass pill fades in on hover, a faint light follows the pointer
                inside it, the icon nudges right, a click sends a ripple out
     selection  the target's pill and edge bar slide to a newly chosen mood
-    mood map   a crosshair with the mood under the pointer ("happy · energetic");
-               the current-mood dot pulses gently
-(The light that follows the pointer across the glass and the edge shine are in
+    mood map   the current-mood dot pulses gently
+(The waves the pointer leaves in the glass, behind all text, are painted by
 frontend.app.GlassWindow.)
 """
 from __future__ import annotations
@@ -38,16 +36,28 @@ from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel,
                              QWidget)
 
 TEXT = "#F7F2F4"
-MUTED = "rgba(247, 242, 244, 150)"
+MUTED = "rgba(247, 242, 244, 175)"
+# Modern UI fonts, first one found wins: Windows 11, Windows 10, macOS.
+FONT_FAMILIES = ["Segoe UI Variable Text", "Segoe UI", ".AppleSystemUIFont", "Helvetica Neue"]
+
+
+def ui_font(size: float = 10.5, weight: QFont.Weight = QFont.Weight.Medium) -> QFont:
+    f = QFont()
+    f.setFamilies(FONT_FAMILIES)
+    f.setPointSizeF(size)
+    f.setWeight(weight)
+    f.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    return f
+
 
 BASE_QSS = f"""
 QWidget#SidebarPanel {{ background: transparent; }}
 QLabel {{ color: {TEXT}; background: transparent; }}
-QLabel#Title {{ font-size: 25px; font-weight: 700; }}
-QLabel#Section {{ color: rgba(247, 242, 244, 175); font-size: 10px; font-weight: 600; }}
-QLabel#Song {{ font-size: 13px; font-weight: 600; }}
-QLabel#Muted {{ color: {MUTED}; font-size: 11px; }}
-QLabel#Account {{ font-size: 12px; font-weight: 600; }}
+QLabel#Title {{ font-size: 26px; font-weight: 800; }}
+QLabel#Section {{ color: rgba(247, 242, 244, 190); font-size: 10px; font-weight: 700; }}
+QLabel#Song {{ font-size: 14px; font-weight: 700; }}
+QLabel#Muted {{ color: {MUTED}; font-size: 11px; font-weight: 500; }}
+QLabel#Account {{ font-size: 12px; font-weight: 700; }}
 """
 
 # What the sidebar says when the playlist session isn't actively shaping the queue.
@@ -83,14 +93,6 @@ def mood_color(point) -> QColor:
     return QColor(c.red(), c.green(), c.blue())  # plain 8-bit RGB, so equal colours compare equal
 
 
-def describe(point) -> str:
-    """Words for a mood point: "happy · energetic", "sad · calm", "neutral · steady", ..."""
-    v, e = point
-    feel = "sad" if v < 0.35 else "happy" if v > 0.65 else "neutral"
-    energy = "calm" if e < 0.35 else "energetic" if e > 0.65 else "steady"
-    return f"{feel} · {energy}"
-
-
 def fade(duration_ms: int, on_value, parent) -> QVariantAnimation:
     """A 0..1 animation (eased) that calls `on_value(t)` on every frame."""
     anim = QVariantAnimation(parent)
@@ -108,30 +110,6 @@ def blend(a: QColor, b: QColor, t: float) -> QColor:
 
 
 # --------------------------------------------------------------------------- small pieces
-
-class WindowDots(QWidget):
-    """The three window dots; the red one hides the sidebar."""
-    closeRequested = pyqtSignal()
-    COLORS = ("#FF5F57", "#FEBC2E", "#28C840")
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setFixedSize(54, 14)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Hide")
-
-    def paintEvent(self, _event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        for i, c in enumerate(self.COLORS):
-            p.setBrush(QColor(c))
-            p.drawEllipse(QPointF(6 + i * 18, 7), 5, 5)
-
-    def mousePressEvent(self, event) -> None:
-        if event.position().x() < 14:
-            self.closeRequested.emit()
-
 
 class Divider(QWidget):
     """A thin line that fades out at both ends."""
@@ -281,7 +259,7 @@ class GlassRow(QAbstractButton):
             p.drawRoundedRect(pill, 11, 11)
         if h > 0.01 and self.mouse is not None:  # a soft light that follows the pointer inside the pill
             light = QRadialGradient(self.mouse, pill.height() * 2.2)
-            light.setColorAt(0, QColor(255, 255, 255, round(48 * h)))
+            light.setColorAt(0, QColor(255, 255, 255, round(26 * h)))
             light.setColorAt(1, QColor(255, 255, 255, 0))
             p.save()
             clip = QPainterPath()
@@ -307,14 +285,10 @@ class GlassRow(QAbstractButton):
 
         nudge = 3.0 * h
         p.setPen(QColor(255, 255, 255, 250 if on else round(185 + 50 * h)))
-        f = QFont(self.font())
-        f.setPointSizeF(12.5)
-        p.setFont(f)
+        p.setFont(ui_font(12.5, QFont.Weight.Medium))
         p.drawText(QRectF(pill.left() + 10 + nudge, pill.top(), 24, pill.height()), Qt.AlignmentFlag.AlignCenter,
                    self.glyph)
-        f.setPointSizeF(10.5)
-        f.setWeight(QFont.Weight.DemiBold if on else QFont.Weight.Normal)
-        p.setFont(f)
+        p.setFont(ui_font(10.5, QFont.Weight.Bold if on else QFont.Weight.DemiBold))
         p.drawText(QRectF(pill.left() + 44 + nudge * 0.5, pill.top(), pill.width() - 80, pill.height()),
                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self.text())
         right = pill.right() - 18
@@ -340,23 +314,16 @@ class MoodTile(GlassRow):
 
 
 class MoodMap(QWidget):
-    """Valence (x) vs energy (y): the current mood (white, gently pulsing), the target (tinted), the gap.
-
-    Hovering shows a crosshair and the mood under the pointer ("happy · energetic").
-    """
+    """Valence (x) vs energy (y): the current mood (white, gently pulsing), the target (tinted), the gap."""
 
     MARGIN = 10
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setFixedHeight(112)
-        self.setMouseTracking(True)
-        self.setCursor(Qt.CursorShape.CrossCursor)
         self.mood: tuple[float, float] | None = None
         self.target: tuple[float, float] | None = None
         self.color = QColor(DEFAULT_TINT)
-        self.hover_point: tuple[float, float] | None = None  # mood space point under the pointer
-        self._mouse: QPointF | None = None
         self._pulse = QTimer(self)  # the mood dot breathes while the sidebar is open
         self._pulse.timeout.connect(self.update)
 
@@ -387,22 +354,12 @@ class MoodMap(QWidget):
         self._pulse.stop()
         super().hideEvent(event)
 
-    def mouseMoveEvent(self, event) -> None:
-        self._mouse = event.position()
-        self.hover_point = self.to_point(self._mouse) if self.area().contains(self._mouse) else None
-        self.update()
-
-    def leaveEvent(self, event) -> None:
-        self._mouse = self.hover_point = None
-        self.update()
-        super().leaveEvent(event)
-
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         area = self.area()
-        p.setPen(QPen(QColor(255, 255, 255, 46 if self.hover_point is None else 70), 1))
-        p.setBrush(QColor(255, 255, 255, 16 if self.hover_point is None else 24))
+        p.setPen(QPen(QColor(255, 255, 255, 46), 1))
+        p.setBrush(QColor(255, 255, 255, 14))
         p.drawRoundedRect(area, 12, 12)
         p.setPen(QPen(QColor(255, 255, 255, 20), 1))
         for k in range(1, 4):
@@ -410,10 +367,8 @@ class MoodMap(QWidget):
             y = area.top() + area.height() * k / 4
             p.drawLine(QPointF(x, area.top() + 4), QPointF(x, area.bottom() - 4))
             p.drawLine(QPointF(area.left() + 4, y), QPointF(area.right() - 4, y))
-        p.setPen(QColor(255, 255, 255, 120))
-        f = QFont(self.font())
-        f.setPointSizeF(7.5)
-        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, 140))
+        p.setFont(ui_font(7.5, QFont.Weight.DemiBold))
         p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "sad")
         p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
@@ -450,27 +405,6 @@ class MoodMap(QWidget):
             p.setBrush(QColor("white"))
             p.drawEllipse(m, 4.5, 4.5)
 
-        if self.hover_point is not None and self._mouse is not None:  # crosshair + the mood under the pointer
-            c = self.to_px(self.hover_point)
-            p.setPen(QPen(QColor(255, 255, 255, 90), 1, Qt.PenStyle.DotLine))
-            p.drawLine(QPointF(area.left() + 4, c.y()), QPointF(area.right() - 4, c.y()))
-            p.drawLine(QPointF(c.x(), area.top() + 4), QPointF(c.x(), area.bottom() - 4))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(255, 255, 255, 220))
-            p.drawEllipse(c, 2.5, 2.5)
-            text = f"{describe(self.hover_point)}  {self.hover_point[0]:.2f}, {self.hover_point[1]:.2f}"
-            f.setPointSizeF(8)
-            p.setFont(f)
-            fm = QFontMetrics(f)
-            tw, th = fm.horizontalAdvance(text) + 14, fm.height() + 6
-            x = min(max(c.x() + 10, area.left() + 4), area.right() - tw - 4)
-            y = c.y() - th - 8 if c.y() - th - 8 > area.top() + 2 else c.y() + 8
-            box = QRectF(x, y, tw, th)
-            p.setPen(QPen(QColor(255, 255, 255, 70), 1))
-            p.setBrush(QColor(10, 6, 10, 150))
-            p.drawRoundedRect(box, th / 2, th / 2)
-            p.setPen(QColor(255, 255, 255, 235))
-            p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
 
 
 class IconButton(QAbstractButton):
@@ -501,10 +435,8 @@ class IconButton(QAbstractButton):
         p.setPen(QPen(QColor(255, 255, 255, 60), 1))
         p.setBrush(QColor(255, 255, 255, 46 if self._hover else 20))
         p.drawEllipse(QRectF(1, 1, self.width() - 2, self.height() - 2))
-        p.setPen(QColor(255, 255, 255, 230))
-        f = QFont(self.font())
-        f.setPointSizeF(10.5)
-        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, 235))
+        p.setFont(ui_font(10.5, QFont.Weight.DemiBold))
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.glyph)
 
 
@@ -525,10 +457,7 @@ class Avatar(QWidget):
         p.setBrush(g)
         p.drawEllipse(QRectF(1, 1, self.width() - 2, self.height() - 2))
         p.setPen(QColor(255, 255, 255, 235))
-        f = QFont(self.font())
-        f.setPointSizeF(12)
-        f.setWeight(QFont.Weight.Bold)
-        p.setFont(f)
+        p.setFont(ui_font(12, QFont.Weight.Bold))
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.initial)
 
 
@@ -541,19 +470,19 @@ class SidebarPanel(QWidget):
     sessionNewRequested = pyqtSignal()
     quitRequested = pyqtSignal()
     logoutRequested = pyqtSignal()
-    closeRequested = pyqtSignal()
     tintChanged = pyqtSignal(QColor)
 
     def __init__(self, moods: Mapping[str, Mapping[str, Any]], parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("SidebarPanel")
+        self.setFont(ui_font())
         self.setStyleSheet(BASE_QSS)
         self.moods = moods
         self.tint = QColor(DEFAULT_TINT)
         self._playback: tuple[float, float, bool, float] | None = None  # progress_ms, duration_ms, playing, at
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 16, 0, 16)
+        root.setContentsMargins(0, 22, 0, 16)
         root.setSpacing(0)
 
         def padded(widget: QWidget, top: int = 0, bottom: int = 0, left: bool = False) -> None:
@@ -564,9 +493,6 @@ class SidebarPanel(QWidget):
                 box.addStretch(1)
             root.addLayout(box)
 
-        self.dots = WindowDots()
-        self.dots.closeRequested.connect(self.closeRequested.emit)
-        padded(self.dots, 0, 12, left=True)
         title = QLabel("Ambient Mood")
         title.setObjectName("Title")
         padded(title, 0, 6)

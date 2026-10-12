@@ -1,8 +1,8 @@
 {
-  "target_mood": "focused",
+  "target_mood": "wind_down",
   "target": {
-    "valence": 0.5,
-    "energy": 0.45
+    "valence": 0.4,
+    "energy": 0.15
   },
   "paused": true,
   "moods": {

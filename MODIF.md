@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M19 · Pointer effects (at the end, after the summary).
+**Latest:** M20 · Waves instead of the pointer light, bolder text, no crosshair or window dots (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M18)
+## Summary of earlier modifications (M1–M19)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -28,38 +28,37 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M16 | 10-11 | **Release 0.2.0 for Windows and Mac** | M14–M15 were only on `dev`; no Mac installer. | Mac support (data in `~/Library/Application Support`, VS Code path per platform, sidebar under the menu bar); `build_mac.sh` + GitHub workflow build Apple silicon and Intel `.dmg` files on release; config with a BOM accepted; `dev` merged into `main`, `v0.2.0` released with plain-language notes. 224 tests. |
 | M17 | 10-12 | **Live sidebar and glass design that follows the mood** | Song, mood dot and details lagged up to a minute and weren't in sync; the sidebar didn't match the reference glass design. | Spotify polled every 3 s (and right after a song ends); mood re-averaged when a song starts; `state.json` written at once on visible changes and watched by the UI; live progress bar. Sidebar rebuilt after `Glass design UI.jpg` (rows with glass pill + edge bar + chevron, account row); tint follows the mood (amber/rose/violet/teal) and glides. 228 tests. |
 | M18 | 10-12 | **Real glass: transparent, blurred background, round corners** | Square edges and thick, opaque glass: the Windows Acrylic call painted black behind Qt's transparent window, in a full rectangle. | Acrylic call removed; a snapshot of the screen behind the sidebar is taken as it opens, blurred and drawn under thinner glass (tint alpha 125/80/70). Same on Windows and macOS; checked on screen. 229 tests. |
+| M19 | 10-12 | **Pointer effects** | The sidebar should react to the mouse like modern websites. | A light in the mood colour followed the pointer and the edge shone near it; rows: hover pill fade, inner light, icon nudge, click ripple; the selection slides between moods; mood map crosshair readout and breathing dot. 232 tests. |
 
 ---
 
-## M19 · Pointer effects · 2026-10-12 · `🆕 LATEST`
+## M20 · Waves instead of the pointer light, bolder text, no crosshair or window dots · 2026-10-12 · `🆕 LATEST`
 
-**Request:** the sidebar should react to the mouse the way modern websites do. The user confirmed the proposed set: effects 1–5 and 7 (not the 3D tilt or particles).
+**Feedback on M19:**
+1. The pointer light was too bright and made text hard to read. Wanted instead: folds/waves when the pointer moves, behind the text.
+2. The text should be bolder, in a better font.
+3. The mood map crosshair isn't good.
+4. The macOS-style window dots at the top serve no purpose.
 
 **Modifications:**
-1. **Light that follows the pointer** (`frontend/app.py`, `GlassWindow`):
-   - while the sidebar is open, a 16 ms timer reads the pointer (`track()`)
-   - the light's position follows with a little lag (32% per frame) and its strength fades in and out (16% per frame)
-   - painted as a radial glow in the mood colour (radius 230, alpha up to 115) over the glass
-   - the timer stops when the sidebar hides
-2. **Edge shine:** a second border stroke with a radial pen at the light's position (radius 200, 2.4 px), so the edge brightens nearest the pointer.
-3. **Row hover, light and ripple** (`frontend/components.py`, `GlassRow`):
-   - the hover pill fades in and out (200 ms, eased)
-   - a soft light follows the pointer inside the pill, clipped to it
-   - the icon nudges 3 px right and the label 1.5 px
-   - a click sends out a ripple ring from the click point (480 ms)
-4. **Sliding selection** (`SidebarPanel`): the selected mood's pill and edge bar are drawn by the panel under the rows and slide to the new row (320 ms, out-cubic). Before, each row drew its own and the selection jumped.
-5. **Mood map** (`MoodMap`):
-   - hovering shows a dotted crosshair and a label with the mood under the pointer (`describe()`: "happy · energetic", plus coordinates)
-   - the current-mood dot breathes (halo pulse every 1.8 s, 40 ms timer, only while shown)
-6. **Docs:** SPEC (pointer effects, acceptance criterion), MANUAL (controls table).
+1. **Waves in the glass** (`frontend/app.py`, `GlassWindow`):
+   - The pointer light and edge shine are removed.
+   - `track()` now spawns a wave every 38 px of pointer movement (`WAVE_STEP`). Its strength is 0.45 plus the speed, and at most 14 waves exist at a time.
+   - `_paint_waves()` draws each wave as a wide ring (26–48 px), darker inside (alpha ≤ 30) and lighter in the mood colour outside (≤ 40), so it reads as a fold in the glass.
+   - Each wave spreads ~150 px with an ease-out and fades over 1.6 s.
+   - The waves are painted in the glass layer, so all text, rows and the mood map sit on top.
+   - Waves are cleared when the sidebar hides.
+2. **Bolder, modern text** (`frontend/components.py`):
+   - `ui_font()` with Segoe UI Variable Text, then Segoe UI, then the macOS system font, without hinting.
+   - Weights: title 800 (26 px), song, section and account 700, rows 600 (selected 700), details and axis labels 500/600.
+   - Muted text is a bit brighter (alpha 150 → 175).
+3. **Mood map:** the crosshair, the readout and the cross cursor are removed (`describe()` too). The breathing dot stays.
+4. **Window dots removed** (`WindowDots`, the panel's `closeRequested`); the title moves up. Clicking outside still hides the sidebar.
+5. **Row inner light** made fainter (alpha 48 → 26).
+6. **Docs:** SPEC (waves, text, map, layout), MANUAL.
 
-**Checked on screen:** with a simulated pointer over the reference backdrop, the light glows in the mood colour, the hovered row has its pill, light and ripple, the map shows "happy · steady 0.79, 0.62", and the selected pill stays on Calm with its edge bar. The light was made stronger after the first capture (alpha 70 → 115).
+**Checked on screen:** a simulated pointer stroke over the reference backdrop (`docs/sidebar-waves.png`). The first version's rings looked busy, so they were made wider and softer and spawn less often (26 → 38 px). The text stays readable over them.
 
-**Tests:** 232 pass. New:
-- the light follows the pointer with lag, fades to 0 when the pointer leaves, and its timer stops when the sidebar hides
-- the hover pill fades in and out, a click starts a ripple that completes
-- the selection slides from Focused to Wind Down (in between mid-way, then exactly on target)
-- the map names the mood under the pointer, the label clears on leave, and the pulse runs only while shown
-
-**Not done / limits:**
-- Effects are drawn in software: around 60 repaints a second while the pointer moves over the open sidebar, and none when it's still or closed.
+**Tests:** 232 pass. Updated:
+- no waves while the pointer stands still, one every 38 px, faded after 1.6 s, capped at 14, cleared on hide
+- the map has no crosshair (arrow cursor) and breathes only while shown

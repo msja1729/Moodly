@@ -12,15 +12,16 @@ the current mood that glides to each new colour, a dark diagonal band, a soft
 highlight and a thin bright border. Mood clicks write config.json directly
 (atomic replace), which the daemon picks up. The sidebar re-reads
 data/state.json the moment the daemon replaces it (file watcher), so the song,
-progress and mood dot change together. While the pointer is over the sidebar,
-a soft light in the mood colour follows it across the glass and the border
-shines nearest to it (see also the row and map effects in components.py).
+progress and mood dot change together. Moving the pointer over the sidebar
+leaves soft waves in the glass, behind all text (see also the row effects in
+components.py).
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import math
 import sys
 import time
 from pathlib import Path
@@ -82,10 +83,9 @@ class GlassWindow(QWidget):
         self._glide = QTimer(self)
         self._glide.timeout.connect(self._glide_step)
         panel.tintChanged.connect(self.set_tint)
-        panel.closeRequested.connect(self.hide)
-        # The light that follows the pointer: position (smoothed) and strength (fades in/out).
-        self.light_pos = QPointF(-1000, -1000)
-        self.light = 0.0
+        # Waves the pointer leaves in the glass: [x, y, born (monotonic s), strength 0..1].
+        self.waves: list[list[float]] = []
+        self._last_wave: QPointF | None = None
         self._pointer = QTimer(self)  # runs only while the sidebar is open
         self._pointer.timeout.connect(self._follow_pointer)
 
@@ -95,26 +95,56 @@ class GlassWindow(QWidget):
 
     def hideEvent(self, event) -> None:
         self._pointer.stop()
-        self.light = 0.0
+        self.waves.clear()
+        self._last_wave = None
         super().hideEvent(event)
 
     def _follow_pointer(self) -> None:
         self.track(QPointF(self.mapFromGlobal(QCursor.pos())))
 
-    def track(self, pos: QPointF) -> None:
-        """One animation step toward the pointer at `pos` (window coordinates)."""
+    WAVE_STEP = 38.0    # a new wave every this many pixels of pointer movement
+    WAVE_LIFE = 1.6     # seconds a wave takes to spread out and fade
+    WAVE_REACH = 150.0  # px a wave spreads in its lifetime
+    MAX_WAVES = 14
+
+    def track(self, pos: QPointF, now: float | None = None) -> None:
+        """One step: the pointer at `pos` (window coordinates) leaves waves as it moves; old ones fade."""
+        now = time.monotonic() if now is None else now
         inside = QRectF(self.rect()).contains(pos)
-        if inside and self.light < 0.02:
-            self.light_pos = QPointF(pos)  # appear where the pointer is, don't fly in
-        before = (self.light, self.light_pos.x(), self.light_pos.y())
-        self.light += ((1.0 if inside else 0.0) - self.light) * 0.16
         if inside:
-            self.light_pos += (pos - self.light_pos) * 0.32  # a little lag feels like liquid light
-        if self.light < 0.005:
-            self.light = 0.0
-        if abs(self.light - before[0]) > 0.002 or abs(self.light_pos.x() - before[1]) > 0.3 \
-                or abs(self.light_pos.y() - before[2]) > 0.3:
+            if self._last_wave is None:
+                self._last_wave = QPointF(pos)
+            moved = math.dist((pos.x(), pos.y()), (self._last_wave.x(), self._last_wave.y()))
+            if moved >= self.WAVE_STEP:
+                strength = min(1.0, 0.45 + moved / 120)  # faster movement, stronger waves
+                self.waves.append([pos.x(), pos.y(), now, strength])
+                self.waves = self.waves[-self.MAX_WAVES:]
+                self._last_wave = QPointF(pos)
+        else:
+            self._last_wave = None
+        alive = [w for w in self.waves if now - w[2] < self.WAVE_LIFE]
+        if alive or self.waves:
+            self.waves = alive
             self.update()
+
+    def _paint_waves(self, p: QPainter, path: QPainterPath, now: float) -> None:
+        """Each wave is a ring: a darker inner edge and a lighter outer edge, like a fold in the glass."""
+        light = self.tint.lighter(175)
+        for x, y, born, strength in self.waves:
+            t = (now - born) / self.WAVE_LIFE
+            if not 0 <= t < 1:
+                continue
+            r = 10 + self.WAVE_REACH * (1 - (1 - t) ** 2)  # quick at first, then slower
+            a = strength * (1 - t) ** 1.5
+            width = 26 + 22 * t  # wide, soft rings read as folds rather than outlines
+            outer = r + width
+            g = QRadialGradient(QPointF(x, y), outer)
+            g.setColorAt(max(0.0, (r - width) / outer), QColor(0, 0, 0, 0))
+            g.setColorAt(max(0.0, (r - width * 0.4) / outer), QColor(6, 2, 8, round(30 * a)))
+            g.setColorAt(r / outer, QColor(light.red(), light.green(), light.blue(), round(40 * a)))
+            g.setColorAt(min(1.0, (r + width * 0.6) / outer), QColor(255, 255, 255, round(12 * a)))
+            g.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.fillPath(path, g)
 
     def set_tint(self, color: QColor) -> None:
         """Glide from the current tint to `color`."""
@@ -197,16 +227,11 @@ class GlassWindow(QWidget):
         glow.setColorAt(1.0, QColor(255, 255, 255, 0))
         p.fillPath(path, glow)
 
-        # 4. The light that follows the pointer, in the mood colour.
-        if self.light > 0:
-            spot = QRadialGradient(self.light_pos, 230)
-            core = self.tint.lighter(165)
-            spot.setColorAt(0.0, QColor(core.red(), core.green(), core.blue(), round(115 * self.light)))
-            spot.setColorAt(0.4, QColor(255, 255, 255, round(30 * self.light)))
-            spot.setColorAt(1.0, QColor(255, 255, 255, 0))
-            p.fillPath(path, spot)
+        # 4. Waves left by the pointer, in the glass (all text is drawn on top by the panel).
+        if self.waves:
+            self._paint_waves(p, path, time.monotonic())
 
-        # 5. A thin bright edge, slightly tinted, shining brighter nearest the pointer.
+        # 5. A thin bright edge, slightly tinted.
         p.setClipping(False)
         edge = QLinearGradient(0, 0, w, h)
         edge.setColorAt(0.0, QColor(255, 255, 255, 120))
@@ -214,12 +239,6 @@ class GlassWindow(QWidget):
         edge.setColorAt(1.0, QColor(255, 255, 255, 90))
         p.setPen(QPen(edge, 1.2))
         p.drawPath(path)
-        if self.light > 0:
-            shine = QRadialGradient(self.light_pos, 200)
-            shine.setColorAt(0.0, QColor(255, 255, 255, round(235 * self.light)))
-            shine.setColorAt(1.0, QColor(255, 255, 255, 0))
-            p.setPen(QPen(shine, 2.4))
-            p.drawPath(path)
 
     def event(self, e) -> bool:
         if e.type() == QEvent.Type.WindowDeactivate and self.isVisible():
