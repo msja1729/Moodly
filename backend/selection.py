@@ -4,8 +4,10 @@ Pure functions (no Spotify calls), so every rule here is unit-tested.
 
 The listening window is the song now playing plus the upcoming songs:
 
-    mood m       = mean (valence, arousal) of the window's songs           (queue_mood)
-    waypoint w   = one Markov-chain step from m toward the target t        (mood_space)
+    mood m       = mean (valence, arousal) of the song playing + the user's
+                   own songs ahead; Moodly's picks count once they play    (listening_mood)
+    heading h    = mean of the whole window, Moodly's picks included       (queue_mood)
+    waypoint w   = one Markov-chain step from h toward the target t        (mood_space)
     candidates   = songs near w, closer to t than m                       (rank_candidates)
                    (from the recommender's pool: the user's taste and top-2
                    languages; or the static catalog as a fallback)
@@ -19,9 +21,8 @@ The listening window is the song now playing plus the upcoming songs:
                    "path": in m -> t order, at the gap with the cheapest
                    insertion cost T(a,c) + T(c,b) - T(a,b)                 (plan_insertions)
                    never before position 2 in either mode
-    removals     = upcoming songs far from BOTH m and t, capped             (choose_removals)
-                   right after a target change: songs far from the NEW
-                   target, up to max_removals_on_retarget                  (choose_retarget_removals)
+    removals     = upcoming songs far from BOTH m and t, capped (a larger
+                   cap right after a target change); the only removal rule  (choose_removals)
 """
 from __future__ import annotations
 
