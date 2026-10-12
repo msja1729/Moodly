@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M32 · End session leaves nothing of the session behind (at the end, after the summary).
+**Latest:** M33 · Release 0.4.0 for Windows and Mac (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M31)
+## Summary of earlier modifications (M1–M32)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -41,23 +41,26 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M29 | 10-12 | **Only songs from the chosen source; End session leaves the playlist** | Old hand-backs piled up in the user's queue and came back each session; Spotify kept playing the deleted playlist. | A playlist / Liked Songs session starts fresh (the song playing + 2 from the source, no queue, no catalog); End session plays the same song and the next 10 as a plain list. 253 tests. |
 | M30 | 10-12 | **Picks climb toward the target; a steadier mood** | A fresh session filled 11 songs around one step (a plateau that later "pulled away"); the mood was one song, so a sad song dragged picks down. | Staircase refills (2 songs per Markov step, in order); picks must beat both mood and heading; the last 3 heard songs count in the mood; polls retry within 5 s. 257 tests. |
 | M31 | 10-12 | **Trial reports saved from the dashboard** | Wanted the results and graphs of many trials in the repo to compare them. | `reports/trials/<trial>/` with report.html, PNG/SVG graphs, summary.json, trial.json; README.md table with averages; auto-save at session end, Save trial / Save all. 261 tests. |
+| M32 | 10-12 | **End session leaves nothing of the session behind** | After End session the session's songs stayed in "Next" and Spotify still showed the playlist. | Only the song playing finishes (`keep_after_end` = 0); the playlist is emptied before it is deleted. 261 tests. |
 
 ---
 
-## M32 · End session leaves nothing of the session behind · 2026-10-12 · `🆕 LATEST`
+## M33 · Release 0.4.0 for Windows and Mac · 2026-10-12 · `🆕 LATEST`
 
-**Problem:** after End session or Quit, the user still saw the session in Spotify:
-- the session's songs lined up in "Next" (M29 kept the song playing plus the next 10 as a plain list)
-- the "Ambient Mood session" playlist itself, in Spotify's sidebar, Home or Recents
-
-**Checked first** (read-only, on the account): no "Ambient Mood session" playlist was left in the library, and nothing was playing from one. Deleting works; what the user saw were the 10 songs kept, and Spotify still showing the deleted playlist. The user confirmed both (asked).
+**Request:** publish a release with everything since 0.3.0, for Windows and Mac.
 
 **Modifications:**
-1. **Only the song playing finishes:**
-   - At the end, Spotify plays just the current song, at the same moment, with no playlist behind it.
-   - None of the session's songs stay queued. The user's own "Add to queue" songs stay, since they're theirs.
-   - The setting is renamed `session.handback_count` (10) → `session.keep_after_end` (0), so settings saved by 0.3.0 don't bring the old 10 back.
-2. **Emptied before deleted:** `_delete_playlist` removes every song, then deletes (unfollows) it. Spotify can't truly delete a playlist, so any entry it still shows is empty. This also applies when the user starts other music and to a playlist left over from a crash.
-3. **Docs:** SPEC, MANUAL, README and the End session tooltip.
+1. `dev` (M24–M32) merged into `main`.
+2. Release `v0.4.0` on GitHub with plain-language notes covering:
+   - choosing where songs come from (For you, Liked Songs or your own playlists), with the popup at Start / New session
+   - fresh sessions that use only the chosen songs
+   - a mood based on what you actually hear
+   - a gradual climb toward the target
+   - fixes: songs cut a second after starting, good songs removed, lag, leftovers after End session
+3. Windows installer `AmbientMood-Setup-0.4.0.exe` built locally; Mac `.dmg` files (Apple silicon, Intel) built by `release-mac.yml`.
+4. Developer-only parts (mood trace, dashboard link, trial reports in `tools/`) are in the code but off in the installed app; `tools/` isn't packaged.
 
-**Tests:** 261 pass. Updated: End session plays only the song playing, empties the playlist (all songs removed), then deletes it.
+**Limits (in the notes):**
+- After End session, music stops when the current song finishes.
+- Songs added with Spotify's own "Add to queue" play first.
+- Only the user's own playlists can be picked.
