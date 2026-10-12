@@ -5,7 +5,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 
 ## Architecture
 *   **Frontend (The Sidebar UI):** A lightweight desktop application using **PyQt6**. It runs in the system tray (the menu bar on macOS) and opens a frameless sidebar next to it.
-    *   **Glass design** (after `Glass design UI.jpg`, preview in `docs/sidebar.png`): a tall panel with 24 px rounded corners, frosted translucent glass (Windows 11 Acrylic blur behind when available) tinted in one colour, two dark diagonal bands, a soft highlight and a thin bright border.
+    *   **Glass design** (after `Glass design UI.jpg`, preview in `docs/sidebar.png`): a tall panel with 24 px rounded corners (no square edges), made of **thin, transparent glass**. What's behind it shows through, **blurred**: a snapshot of the screen behind the sidebar is taken as it opens and blurred (the same on Windows and macOS). Over it: a light tint in one colour, two dark diagonal bands, a soft highlight and a thin bright border. Without a snapshot (e.g. no screen access) the glass is drawn denser so text stays readable.
     *   **Layout, top to bottom:** window dots (red hides the sidebar); the title "Ambient Mood"; fading dividers between the sections listed below.
         1. **NOW PLAYING:** song, artist, a live progress bar; the mood map (current mood white, target tinted, dashed gap); a status line.
         2. **MOODS:** one row per target mood (glyph + label). The selected one is a lighter glass pill with a white bar on the panel edge and a chevron. A dot marks the mood closest to how the music feels now.
@@ -123,7 +123,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   **Frontend (Log out):** Log out deletes only the active account's saved token, removes it from the list, and shows the account window again; closing that window quits the app.
 *   **Frontend:** The UI successfully launches as a system tray icon and opens a frameless, frosted-glass sidebar menu when clicked.
 *   **Frontend (Sync):** A song change (natural or skipped) appears in the sidebar within ~3 s: song, artist, progress bar and mood dot together; a new `state.json` is shown without waiting for the UI's timer.
-*   **Frontend (Glass design):** The sidebar follows the reference glass design, fits in 680 px, and its tint follows the current mood (four distinct hues at the four corners of the mood space), gliding between colours.
+*   **Frontend (Glass design):** The sidebar follows the reference glass design, fits in 680 px, has only rounded corners, shows the blurred background through thin glass, and its tint follows the current mood (four distinct hues at the four corners of the mood space), gliding between colours.
 *   **Frontend:** Clicking a mood button successfully updates the target coordinates in `config.json` in under 100ms.
 *   **Backend (Inference):** The daemon successfully polls the live Spotify API for the currently playing track and retrieves audio features from the fallback chain without crashing.
 *   **Backend (Actuation):** When the current mood vector deviates by >0.2 from the target coordinates, the audio actuator calculates a bridging track mathematically plotted between the current and target state, and successfully pushes it to the active Spotify queue.

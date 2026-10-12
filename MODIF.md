@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M17 · Live sidebar and glass design that follows the mood (at the end, after the summary).
+**Latest:** M18 · Real glass: transparent, blurred background, round corners (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M16)
+## Summary of earlier modifications (M1–M17)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -26,40 +26,36 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M14 | 10-11 | **Song recommender: taste + mood + top-2 languages** | Songs came from a 2022 dataset by mood only: not the user's taste or languages, no new releases. | New `recommender/` package. Taste profile (Spotify top tracks + Moodly plays/skips); top-2 languages; songs of favourite + Deezer-related artists via Spotify search (incl. the last two years); language from marker → script → LRCLIB lyrics → romanized words → artist; mood features via ReccoBeats or an iTunes preview analysed by ReccoBeats; selection adds a language filter and `− 0.12·taste − 0.03·freshness`. Live: Telugu 52%, Hindi 33%; pool 36 → 66 → 86 songs. 218 tests. |
 | M15 | 10-11 | **Session buttons and a song pool prepared per session** | Before the pool was ready, and when it had nothing near a step, random catalog songs (any language) were added; sessions started on their own. | Sidebar: Start session (at launch), End session, New session. On start, new session and every target change the session "prepares": nothing is added until the pool holds 15 useful songs (max 10 min; 2 songs kept ahead so music never stops). The pool is aimed at the goal (songs leading away are pruned); no catalog songs for mood steps; the pool is cleared from disk at session end. 222 tests. |
 | M16 | 10-11 | **Release 0.2.0 for Windows and Mac** | M14–M15 were only on `dev`; no Mac installer. | Mac support (data in `~/Library/Application Support`, VS Code path per platform, sidebar under the menu bar); `build_mac.sh` + GitHub workflow build Apple silicon and Intel `.dmg` files on release; config with a BOM accepted; `dev` merged into `main`, `v0.2.0` released with plain-language notes. 224 tests. |
+| M17 | 10-12 | **Live sidebar and glass design that follows the mood** | Song, mood dot and details lagged up to a minute and weren't in sync; the sidebar didn't match the reference glass design. | Spotify polled every 3 s (and right after a song ends); mood re-averaged when a song starts; `state.json` written at once on visible changes and watched by the UI; live progress bar. Sidebar rebuilt after `Glass design UI.jpg` (rows with glass pill + edge bar + chevron, account row); tint follows the mood (amber/rose/violet/teal) and glides. 228 tests. |
 
 ---
 
-## M17 · Live sidebar and glass design that follows the mood · 2026-10-12 · `🆕 LATEST`
+## M18 · Real glass: transparent, blurred background, round corners · 2026-10-12 · `🆕 LATEST`
 
-**Problems:**
-1. **Lag:** the song, the mood dot and the details updated late (up to a minute) and not together. Causes:
-   - the daemon polled Spotify every 30–60 s
-   - the mood dot moved only on a session cycle (at most every 30 s)
-   - the sidebar re-read `state.json` every 1.5 s
-2. **Design:** the sidebar should look like the reference `Glass design UI.jpg`, and its colour should change with the mood.
+**Problems (seen on screen):**
+1. Square edges showed around the rounded corners.
+2. The glass looked thick and opaque instead of transparent with the background blurred.
 
-**Modifications:**
-1. **Faster, exact polling** (`backend/inference.py`, config `inference`):
-   - every **3 s** while music plays, and 0.4 s after the song is due to end; 15 s when paused or idle (was 30–60 s)
-   - backoff on rate limits is unchanged
-2. **Mood moves with the song** (`backend/actuators/session.py`): the session keeps the last window's (uri, point). When a song starts, `_advance_mood()` drops the songs before it and re-averages at once, without waiting for the next cycle.
-3. **State written when it matters** (`backend/daemon.py`):
-   - `state.json` gains `track_name`, `track_artists`, `progress_ms`, `duration_ms`, `is_playing`, `observed_at`
-   - `write_state()` writes at once when anything visible changes, else every 10 s (progress alone doesn't trigger a write)
-4. **Sidebar reacts instantly** (`frontend/app.py`): a `QFileSystemWatcher` on `data/` and `state.json` refreshes 30 ms after the daemon replaces the file. The 1.5 s timer stays as a fallback. The progress bar moves by itself every 250 ms.
-5. **Glass design** (`frontend/components.py` rewritten, `frontend/app.py` `GlassWindow`):
-   - **Panel:** 330 × 680, 24 px corners; tinted gradient glass with two dark diagonal bands, a soft highlight and a thin bright edge; Acrylic blur behind on Windows
-   - **Content:** window dots (red hides it); the "Ambient Mood" title; fading dividers; NOW PLAYING (song, artist, progress bar, mood map, status line)
-   - **MOODS rows:** the selected row is a lighter glass pill with a white edge bar and a chevron; a dot marks the mood closest to the current one
-   - **Account row:** SESSION rows, then the account row with avatar initial, name, "Spotify Premium" and round Log out / Quit buttons
-6. **Colour follows the mood:**
-   - `mood_color(valence, energy)` picks the hue by direction from neutral (amber happy+energetic, rose tense, violet sad, teal calm, blended between) and the richness by distance
-   - the window glides to each new tint over 0.9 s (eased)
-   - the selected row, avatar and target dot pick up the tint
-7. **Docs:** SPEC (frontend design, dynamic colour, sync, polling, acceptance criteria), MANUAL (sidebar picture and controls), README (preview `docs/sidebar.png`, polling settings).
+**Cause (found by capturing the sidebar on screen over a colourful background):** the Windows Acrylic call (`SetWindowCompositionAttribute`) doesn't blur behind Qt's transparent windows here. It paints **black** across the window's full **rectangle**. That black, under the painted glass (70–85% opaque), was both the thick look and the square corners. Clipping the window to a rounded mask didn't help.
 
-**Tests:** 228 pass. New: poll timing; the mood re-averaged on a song start; state written only on visible change or every 10 s; a new `state.json` shown at once via the watcher (song, artist, progress, mood); four distinct hues and the tint gliding to the mood colour; the closest-mood dot. The design was checked by rendering the sidebar in three moods (`docs/sidebar.png`).
+**Modifications** (`frontend/app.py`):
+1. **Acrylic call removed** (`enable_acrylic`); no DWM corner preference.
+2. **Own blur:**
+   - `GlassWindow.capture_backdrop()` snapshots the screen where the sidebar will appear, while it is still hidden (`show_sidebar()` calls it before `show()`).
+   - `blur_pixmap()` blurs the snapshot: shrink by ~7×, then 2×, then scale back up smoothly.
+   - `paintEvent` draws the snapshot first, so what's behind shows through, blurred. This works the same on Windows and macOS (on macOS without the Screen Recording permission the snapshot holds only the wallpaper).
+3. **Thinner glass** over the blur:
+   - tint alpha 125 → 80 → 70 from top to bottom (was 215 → 175 → 170)
+   - diagonal bands 80/40 (was 120/60)
+   - without a snapshot, +95 alpha so text stays readable
+4. **Round corners only:** everything is painted inside the rounded path, and nothing fills the rectangle behind it.
+
+**Checked on screen:**
+- the sidebar over the reference image in Calm and Energized (`docs/sidebar.png`)
+- the background shows through, blurred, with round corners and no square edges
+- the tint is still visible and the text is readable
+
+**Tests:** 229 pass (new: the blur softens a sharp pattern; opening the sidebar takes a snapshot first).
 
 **Not done / limits:**
-- Not yet checked live against Spotify: polling every 3 s is ~20 Spotify calls a minute per user.
-- On Windows the blur behind the glass needs Windows 10/11 Acrylic. On macOS the glass is painted without the system blur.
+- The blurred background is a snapshot from when the sidebar opens: something moving behind it (a video) isn't updated until it is reopened. The sidebar is a short-lived flyout, which keeps this acceptable.

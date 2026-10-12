@@ -4,7 +4,7 @@
     "valence": 0.5,
     "energy": 0.45
   },
-  "paused": false,
+  "paused": true,
   "moods": {
     "focused": {
       "label": "Focused",

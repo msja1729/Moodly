@@ -237,3 +237,23 @@ def test_glass_tint_follows_the_mood(qtbot, tmp_config):
     assert not app.window.grab().isNull()
     app.timer.stop()
     app.tray.hide()
+
+
+def test_glass_blurs_what_is_behind(qtbot, tray_app):
+    from PyQt6.QtGui import QColor, QImage, QPixmap
+
+    from frontend.app import blur_pixmap
+
+    img = QImage(200, 200, QImage.Format.Format_RGB32)
+    for y in range(200):
+        for x in range(200):
+            img.setPixelColor(x, y, QColor("white") if (x // 10 + y // 10) % 2 else QColor("black"))  # sharp checkers
+    blurred = blur_pixmap(QPixmap.fromImage(img)).toImage()
+    assert blurred.size() == img.size()
+    grey = blurred.pixelColor(100, 100).value()
+    assert 40 < grey < 215  # sharp black/white squares became a soft mix
+
+    tray_app.show_sidebar()  # snapshots the screen behind before showing (null on headless test screens is fine)
+    qtbot.waitExposed(tray_app.window)
+    assert tray_app.window.backdrop is None or not tray_app.window.backdrop.isNull()
+    assert not tray_app.window.grab().isNull()

@@ -6,8 +6,8 @@
 Clicking the tray icon toggles a frameless sidebar anchored above the
 taskbar. On Windows 10/11 the window gets the Acrylic blur-behind material
 via SetWindowCompositionAttribute (plus rounded corners on Windows 11); on
-other platforms a translucent tint is painted instead. Over it the window
-paints the glass of the reference design (Glass design UI.jpg): a tint from
+other platforms alike the window paints the glass of the reference design (Glass design UI.jpg) over a blurred
+snapshot of what's behind it (taken as the sidebar opens): a tint from
 the current mood that glides to each new colour, a dark diagonal band, a soft
 highlight and a thin bright border. Mood clicks write config.json directly
 (atomic replace), which the daemon picks up. The sidebar re-reads
@@ -39,36 +39,21 @@ SIDEBAR_SIZE = (330, 680)
 RADIUS = 24
 
 
-def enable_acrylic(hwnd: int, tint_abgr: int = 0x40140A10) -> bool:
-    """Windows 10/11 Acrylic blur behind a frameless window. Returns success."""
-    if sys.platform != "win32":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class ACCENT_POLICY(ctypes.Structure):
-            _fields_ = [("AccentState", ctypes.c_int), ("AccentFlags", ctypes.c_int),
-                        ("GradientColor", ctypes.c_uint), ("AnimationId", ctypes.c_int)]
-
-        class WINCOMPATTRDATA(ctypes.Structure):
-            _fields_ = [("Attribute", ctypes.c_int), ("Data", ctypes.c_void_p), ("SizeOfData", ctypes.c_size_t)]
-
-        accent = ACCENT_POLICY(4, 2, tint_abgr, 0)  # ACCENT_ENABLE_ACRYLICBLURBEHIND
-        data = WINCOMPATTRDATA(19, ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p),  # WCA_ACCENT_POLICY
-                               ctypes.sizeof(accent))
-        user32 = ctypes.windll.user32
-        user32.SetWindowCompositionAttribute.argtypes = [wintypes.HWND, ctypes.c_void_p]
-        ok = bool(user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data)))
-
-        # Windows 11: ask DWM for rounded corners (ignored on Windows 10).
-        corner = ctypes.c_int(2)  # DWMWCP_ROUND
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd), 33, ctypes.byref(corner),
-                                                   ctypes.sizeof(corner))
-        return ok
-    except Exception as e:  # never let cosmetics break the app
-        log.debug("acrylic unavailable: %s", e)
-        return False
+def blur_pixmap(pm: QPixmap, radius: int = 14) -> QPixmap:
+    """A soft blur: shrink a lot, then scale back up smoothly (in two steps, so it's even)."""
+    if pm.isNull():
+        return pm
+    img = pm.toImage()
+    w, h = img.width(), img.height()
+    small = img.scaled(max(1, w // (radius // 2)), max(1, h // (radius // 2)), Qt.AspectRatioMode.IgnoreAspectRatio,
+                       Qt.TransformationMode.SmoothTransformation)
+    tiny = small.scaled(max(1, small.width() // 2), max(1, small.height() // 2), Qt.AspectRatioMode.IgnoreAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+    up = tiny.scaled(small.width(), small.height(), Qt.AspectRatioMode.IgnoreAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+    out = QPixmap.fromImage(up.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
+    out.setDevicePixelRatio(pm.devicePixelRatio())
+    return out
 
 
 class GlassWindow(QWidget):
@@ -86,7 +71,7 @@ class GlassWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(panel)
-        self.acrylic = False
+        self.backdrop: QPixmap | None = None  # blurred snapshot of the screen behind the sidebar
         self.hidden_at = 0.0
         self.tint = QColor(DEFAULT_TINT)
         self._from = QColor(self.tint)
@@ -116,39 +101,59 @@ class GlassWindow(QWidget):
         if t >= 1.0:
             self._glide.stop()
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if not self.acrylic:
-            self.acrylic = enable_acrylic(int(self.winId()))
+    def rounded_path(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
+        return path
+
+    def capture_backdrop(self) -> None:
+        """Snapshot and blur the screen where the sidebar is about to appear (call while it's hidden).
+
+        A static snapshot is enough for a flyout. On macOS without the Screen Recording permission
+        it holds only the wallpaper, which still reads as frosted glass.
+        """
+        self.backdrop = None
+        screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        sg, g = screen.geometry(), self.geometry()
+        try:
+            shot = screen.grabWindow(0, g.x() - sg.x(), g.y() - sg.y(), g.width(), g.height())
+        except Exception as e:  # never let cosmetics break the app
+            log.debug("backdrop capture failed: %s", e)
+            return
+        if not shot.isNull():
+            self.backdrop = blur_pixmap(shot)
 
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(r, RADIUS, RADIUS)
+        path = self.rounded_path()
         p.setClipPath(path)
-        w, h = r.width(), r.height()
-        dense = 0 if self.acrylic else 40  # without the OS blur behind, a slightly denser glass
+        w, h = float(self.width()), float(self.height())
+        # 0. What's behind the sidebar, blurred: the glass is thin, so it shows through.
+        if self.backdrop is not None:
+            p.drawPixmap(self.rect(), self.backdrop)
+        dense = 0 if self.backdrop is not None else 95  # no snapshot: a denser glass keeps text readable
 
-        # 1. Tinted glass: deep at the top, brighter towards the bottom.
+        # 1. A light tint over a faint dark veil: deeper at the top, clearer towards the bottom.
         base = QLinearGradient(0, 0, 0, h)
-        top, mid, low = self.tint.darker(300), self.tint.darker(125), QColor(self.tint)
-        top.setAlpha(215 + dense // 2)
-        mid.setAlpha(175 + dense)
-        low.setAlpha(170 + dense)
+        top, mid, low = self.tint.darker(280), self.tint.darker(130), QColor(self.tint)
+        top.setAlpha(125 + dense)
+        mid.setAlpha(80 + dense)
+        low.setAlpha(70 + dense)
         base.setColorAt(0.0, top)
         base.setColorAt(0.45, mid)
         base.setColorAt(1.0, low)
         p.fillPath(path, base)
 
-        # 2. The dark diagonal bands that make it read as glass (as in the reference).
+        # 2. The dark diagonal bands that make it read as glass (as in the reference), lighter now.
         for start, end, stops in (((0.0, 0.05), (1.0, 0.45), (0.0, 0.42, 0.60, 0.80)),
                                   ((0.0, 0.55), (1.0, 0.95), (0.55, 0.78, 0.90, 1.0))):
             band = QLinearGradient(w * start[0], h * start[1], w * end[0], h * end[1])
             band.setColorAt(stops[0], QColor(8, 4, 8, 0))
-            band.setColorAt(stops[1], QColor(8, 4, 8, 120))
-            band.setColorAt(stops[2], QColor(8, 4, 8, 60))
+            band.setColorAt(stops[1], QColor(8, 4, 8, 80))
+            band.setColorAt(stops[2], QColor(8, 4, 8, 40))
             band.setColorAt(stops[3], QColor(8, 4, 8, 0))
             p.fillPath(path, band)
 
@@ -327,6 +332,7 @@ class MoodTrayApp:
     def show_sidebar(self) -> None:
         self.refresh()
         self.window.place()
+        self.window.capture_backdrop()  # while still hidden: what's behind it
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
