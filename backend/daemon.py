@@ -198,7 +198,7 @@ class Daemon:
                 new_track = True
                 self.audio.note_started(ev.track.id)
                 if self.session is not None:
-                    self.session.note_started(ev.track.id)
+                    self.session.note_started(ev.track.id, ev.track.name, ev.track.artists)
                 mood = self.mood
                 log.info("now playing %s - %s | mood %s | target %s",
                          ev.track.artists, ev.track.name,

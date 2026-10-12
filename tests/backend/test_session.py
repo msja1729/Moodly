@@ -1,6 +1,7 @@
 """Phase 2 playlist session against the simulated Spotify: hand-over, reshaping, user actions, ending."""
 import asyncio
 import json
+import math
 
 import numpy as np
 import pytest
@@ -303,18 +304,31 @@ class TestLiveRunFixes:
         asyncio.run(run())
         assert len(client.playlists) == 1 and s.active
 
-    def test_new_target_clears_songs_far_from_it(self, big_catalog, clock):
+    def test_new_target_keeps_songs_near_the_mood(self, big_catalog, clock):
+        # Only songs far from both the mood and the target are removed, also right after a new target.
         client, _ = playing_client(big_catalog, clock, queued=0)
         s = make_session(client, big_catalog, clock)
         s.start()
-        loud_songs = loud(big_catalog, 17)[1:]  # 16 loud, happy songs in the playlist (not in Spotify's queue)
+        loud_songs = loud(big_catalog, 17)[1:]  # 16 loud, happy songs: that's the mood now
         client.playlist_add(s.playlist_id, [f"spotify:track:{t}" for t in loud_songs])
         wind_down = (0.4, 0.15)
         s.cycle(wind_down, "target_change")
-        assert len(s.last_removed) == SelectionParams().max_removals_on_retarget
-        assert s.last_added and s.queue_size >= SelectionParams().target_length  # refilled
-        s.cycle(wind_down, "timer")  # an ordinary cycle doesn't clear songs near the current mood
-        assert len(s.last_removed) <= SelectionParams().max_removals_per_cycle
+        assert s.last_removed == []  # far from Wind Down, but they are what the user is listening to
+        s.cycle(wind_down, "timer")
+        assert s.last_removed == []
+
+    def test_new_target_removes_songs_far_from_mood_and_target(self, big_catalog, clock):
+        client, _ = playing_client(big_catalog, clock, queued=0)
+        s = make_session(client, big_catalog, clock)
+        s.start()
+        calm = sorted(big_catalog, key=lambda t: math.dist(big_catalog[t][1].point, (0.5, 0.45)))[:13]
+        sad = sorted(big_catalog, key=lambda t: math.dist(big_catalog[t][1].point, (0.05, 0.05)))[:4]
+        client.playlist_add(s.playlist_id, [f"spotify:track:{t}" for t in calm + sad])
+        s.cycle((0.9, 0.9), "target_change")
+        removed = {r.split(" - ")[-1] for r in s.last_removed}
+        sad_names = {big_catalog[t][0].name for t in sad}
+        assert removed and removed <= sad_names  # only the far-off sad songs, capped
+        assert len(s.last_removed) <= SelectionParams().max_removals_on_retarget
 
     def test_random_insert_positions_are_in_the_middle(self):
         from backend.selection import WindowItem, random_positions
@@ -423,10 +437,12 @@ def test_mood_moves_as_soon_as_the_next_song_starts(big_catalog, clock):
     s.start()
     s.cycle(FOCUSED)
     before = s.mood
-    nxt = s._window_points[1][0].rsplit(":", 1)[-1]
-    s.note_started(nxt)  # no cycle: the mood is re-averaged from the window that's left
+    nxt = upcoming(client)[0].rsplit(":", 1)[-1]
+    t = big_catalog[nxt][0]
+    s.note_started(nxt, t.name, t.artists)  # no cycle: the mood is re-averaged from the window that's left
     assert s.mood != before
-    pts = [p for _, p in s._window_points[:SelectionParams().window_size] if p]
+    # The song playing + the user's own songs ahead (Moodly's picks only count once they play).
+    pts = [p for i, (_, p, ours) in enumerate(s._window_points) if p and (i == 0 or not ours)]
     assert s.mood == pytest.approx((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))
 
 
@@ -446,7 +462,8 @@ def test_mood_trace_records_cycles_songs_and_end_only_when_enabled(big_catalog, 
                   "direction": None, "settled": False})(), window=[], added=[], removed=[], preparing=False,
                   needs_more_songs=False, queue_size=0)  # nothing changed: not written again
     assert len(path.read_text(encoding="utf-8").splitlines()) == n_cycles + 1
-    s.note_started(s._window_points[1][0].rsplit(":", 1)[-1])
+    nxt = upcoming(client)[0].rsplit(":", 1)[-1]
+    s.note_started(nxt, big_catalog[nxt][0].name, big_catalog[nxt][0].artists)
     s.end()
     events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [e["kind"] for e in events] == ["cycle", "cycle", "song", "end"]
@@ -483,3 +500,51 @@ def test_cover_url_picks_the_300px_album_image():
                                  {"url": "small", "width": 64}]}}
     t = _track_from_item(item)
     assert t.image == "mid" and t == _track_from_item({**item, "album": {}})  # the image isn't part of identity
+
+
+def _queue_with(client, transform):
+    """Make Spotify's queue report its songs through `transform` (e.g. relinked ids, a reshuffle)."""
+    real = client.queue
+
+    def queue():
+        return transform(real())
+    client.queue = queue
+
+
+def test_relinked_ids_in_spotify_queue_remove_nothing(big_catalog, clock):
+    # Spotify (e.g. in India) reports the same song under another id; it must not look like the user's queue.
+    from backend.spotify.client import Item
+    client, _ = playing_client(big_catalog, clock, queued=0)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    near = sorted(big_catalog, key=lambda t: math.dist(big_catalog[t][1].point, (0.9, 0.9)))[1:15]
+    client.playlist_add(s.playlist_id, [f"spotify:track:{t}" for t in near])
+    s.cycle((0.9, 0.9), "timer")
+    _queue_with(client, lambda items: [Item(it.uri + "x", it.name, it.artists, it.duration_ms) for it in items])
+    for _ in range(3):
+        clock.advance(30)
+        s.cycle((0.9, 0.9), "timer")
+        assert not s.last_removed
+
+
+def test_misread_queue_never_removes_playlist_songs(big_catalog, clock):
+    client, _ = playing_client(big_catalog, clock, queued=0)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    near = sorted(big_catalog, key=lambda t: math.dist(big_catalog[t][1].point, (0.9, 0.9)))[1:15]
+    client.playlist_add(s.playlist_id, [f"spotify:track:{t}" for t in near])
+    s.cycle((0.9, 0.9), "timer")
+    _queue_with(client, lambda items: list(reversed(items)))  # nothing lines up with the playlist
+    clock.advance(30)
+    s.cycle((0.9, 0.9), "timer")
+    assert not s.last_removed
+
+
+def test_mood_is_what_the_user_listens_to_not_moodlys_picks(big_catalog, clock):
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    s.cycle((0.1, 0.1), "ready")  # Moodly adds sad, calm songs
+    assert s.last_added
+    own = [big_catalog[t][1].point for t in songs]  # the song playing + the user's 4 queued songs
+    assert s.mood == pytest.approx((sum(p[0] for p in own) / 5, sum(p[1] for p in own) / 5))

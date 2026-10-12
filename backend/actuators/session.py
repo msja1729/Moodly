@@ -47,7 +47,9 @@ import numpy as np
 from backend.catalog import CatalogTrack, TrackTable
 from backend.features import FeatureChain, Features
 from backend.mood_space import Direction, MarkovParams, MoodChain, Point, distance
-from backend.selection import (CyclePlan, MusicalContext, SelectionParams, WindowItem, plan_cycle, queue_mood,
+from backend.spotify.client import song_key
+from backend.selection import (CyclePlan, MusicalContext, SelectionParams, WindowItem, listening_mood, plan_cycle,
+                               queue_mood,
                                rank_candidates)
 from backend.spotify.client import Item, PremiumRequired, RateLimited
 
@@ -76,6 +78,7 @@ class SessionParams:
     recent_exclusion: int = 50       # songs played recently are not picked again...
     replay_after: int = 10           # ...unless the catalog runs dry; then only the last 10 are excluded
     pool_max_jump: float = 0.3       # pool picks further than this (on average) from the waypoint: add nothing
+    max_manual_overlap: int = 3      # more "own queue" songs than this also in the playlist = a misread queue
     prepare_min_upcoming: int = 2    # while preparing, songs added only to keep this many ahead
 
     @classmethod
@@ -135,7 +138,7 @@ class PlaylistSession:
         self.table = table
         self.fallback_table: TrackTable | None = None
         self.preparing = False         # pool being filled: measure only, don't add or remove
-        self._window_points: list[tuple[str, Point | None]] = []  # last window seen: (uri, point)
+        self._window_points: list[tuple[str, Point | None, bool]] = []  # last window seen: (key, point, ours)
         self.needs_more_songs = False  # the pool had nothing near the last mood step
         # The pool is the user's own playlist / Liked Songs (no fallback): songs may repeat, and
         # `source_dry` says the playlist has nothing closer to the target than the mood already is.
@@ -165,10 +168,13 @@ class PlaylistSession:
         self.last_removed: list[str] = []
         self.last_cycle_at: float | None = None
         self.played_ids: set[str] = set()      # songs that started this session
+        self.played_keys: set[str] = set()     # the same by title + artists (Spotify relinks ids)
+        self.added_keys: set[str] = set()      # songs Moodly added this session
         self.removed_ids: set[str] = set()     # never re-add a song we removed
         self.recent: deque[str] = deque(maxlen=params.recent_exclusion)
         self.pending: dict[str, Direction] = {}  # inserted song -> Markov direction (for skip feedback)
         self._cur_index = 0
+        self._now_key = ""
         self._handover_at: float | None = None
         self._foreign_seen = 0          # consecutive cycles that saw another source playing
         self._known_uris: set[str] = set()  # playlist songs + Spotify-queue songs seen last cycle
@@ -306,8 +312,9 @@ class PlaylistSession:
         playlist (it's from Spotify's own queue), the last position is kept.
         """
         start = min(self._cur_index, max(len(entries) - 1, 0))
+        now_key = self._now_key
         for i in list(range(start, len(entries))) + list(range(0, start)):
-            if entries[i].uri == now_uri:
+            if entries[i].uri == now_uri or entries[i].key == now_key:
                 return i, True
         return min(self._cur_index, len(entries) - 1), False
 
@@ -325,7 +332,8 @@ class PlaylistSession:
             # source with a song we don't know), seen on two cycles in a row after the grace
             # period, means the user started other music.
             settling = self._handover_at is not None and self.clock.now() - self._handover_at < self.params.takeover_grace_s
-            if settling or (ps.context_uri is None and ps.item.uri in self._known_uris):
+            if settling or (ps.context_uri is None and (ps.item.uri in self._known_uris
+                                                        or ps.item.key in self._known_uris)):
                 return
             self._foreign_seen += 1
             if self._foreign_seen < 2:
@@ -341,9 +349,10 @@ class PlaylistSession:
         self.status = MANAGING
 
         entries = self.client.playlist_items(self.playlist_id)
+        self._now_key = ps.item.key
         cur, in_playlist = self._locate(entries, ps.item.uri)
         self._cur_index = cur
-        in_snapshot = self._advance_snapshot(ps.item.uri)
+        in_snapshot = self._advance_snapshot(ps.item.key)
         if not in_playlist and in_snapshot and entries and self.params.resync_after_edits:
             # Spotify is playing its old copy of the playlist: this song was removed since.
             # Move on to the current playlist's next song.
@@ -359,39 +368,52 @@ class PlaylistSession:
         # Spotify's queue = the user's songs + the rest of the playlist, as Spotify has it: usually its
         # copy from the last resync (snapshot), but some clients follow edits live. Take whichever
         # explains the queue with the fewest user songs, so playlist songs are never mistaken for them.
+        # Songs are compared by title + artists: Spotify may report a relinked id for the same song.
         spotify_queue = self.client.queue()
-        queue_uris = [it.uri for it in spotify_queue]
-        n_manual = min(manual_prefix_length(queue_uris, self._snapshot[self._snap_index + 1:]),
-                       manual_prefix_length(queue_uris, [e.uri for e in upcoming_entries]))
+        queue_keys = [it.key for it in spotify_queue]
+        n_manual = min(manual_prefix_length(queue_keys, self._snapshot[self._snap_index + 1:]),
+                       manual_prefix_length(queue_keys, [e.key for e in upcoming_entries]))
         manual = spotify_queue[:n_manual]
-        self._known_uris = {e.uri for e in entries} | {it.uri for it in spotify_queue}
+        self._known_uris = ({e.uri for e in entries} | {it.uri for it in spotify_queue}
+                            | {e.key for e in entries} | set(queue_keys))
 
         feats = self._features_for([ps.item] + manual + upcoming_entries)
         now_item = WindowItem(ps.item.uri, ps.item.name, ps.item.artists, feats.get(ps.item.id),
-                              ps.item.kind, removable=False)
+                              ps.item.kind, removable=False, ours=ps.item.key in self.added_keys)
         window = [now_item]
         window += [WindowItem(it.uri, it.name, it.artists, feats.get(it.id), it.kind, removable=False)
                    for it in manual]
         window += [WindowItem(it.uri, it.name, it.artists, feats.get(it.id), it.kind,
-                              removable=it.kind == "track") for it in upcoming_entries]
+                              removable=it.kind == "track", ours=it.key in self.added_keys)
+                   for it in upcoming_entries]
 
         # Drop playlist copies of songs that already played this session or that will play from
         # Spotify's own queue anyway (copied in at hand-over), so nothing plays twice.
+        manual_keys = [it.key for it in manual]
+        copied_in = [e.key for e in upcoming_entries[:len(manual_keys)]] == manual_keys  # at hand-over
+        overlap = len(set(manual_keys) & {e.key for e in upcoming_entries})
+        if overlap > self.params.max_manual_overlap and not copied_in:
+            # "The user's own queue" is mostly playlist songs, not copied in at hand-over: Spotify's queue
+            # was misread. Treat it all as the playlist, and never remove songs on that basis.
+            log.warning("Spotify's queue doesn't line up with the playlist; not treating it as your own songs")
+            n_manual, manual, manual_keys = 0, [], []
+            window = window[:1] + [w for w in window[1:] if w.removable or w.kind != "track"]
         protected_uris = {ps.item.uri}
         if n_manual == 0 and upcoming_entries:
             protected_uris.add(upcoming_entries[0].uri)  # the next song, already buffered by Spotify
-        manual_uris = {it.uri for it in manual}
+        manual_keys = set(manual_keys)
         duplicate_uris = {it.uri for it in upcoming_entries
-                          if it.kind == "track" and (it.id in self.played_ids or it.uri in manual_uris)
-                          and it.uri not in protected_uris}
+                          if it.kind == "track" and it.key != ps.item.key and it.uri not in protected_uris
+                          and (it.key in self.played_keys or it.key in manual_keys)}
 
         chain = self.chain_for(target)
         exclude = self.removed_ids | set(self.recent)
         retarget = reason in ("start", "target_change", "ready")
         if self.preparing:
             # The pool is being filled: only measure the mood (the daemon decides when it's ready).
-            mood = queue_mood(window, self.selection.window_size)
-            plan = CyclePlan(mood, distance(mood, target) if mood is not None else None)
+            mood = listening_mood(window, self.selection.window_size)
+            plan = CyclePlan(mood, distance(mood, target) if mood is not None else None,
+                             ahead=queue_mood(window, self.selection.window_size))
         else:
             plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget,
                               self.languages)
@@ -409,11 +431,11 @@ class PlaylistSession:
                 plan.insertions = []
                 self.needs_more_songs = True
         self.mood, self.deviation = plan.mood, plan.deviation
-        self._window_points = [(it.uri, it.point) for it in window]
+        self._window_points = [(it.key, it.point, it.ours) for it in window]
         if self.allow_repeats and not self.preparing:
             self.source_dry = plan.waypoint is not None and not plan.insertions
         self._target = target
-        self._window_names = {it.uri: f"{it.artists} - {it.name}" for it in window}
+        self._window_names = {it.key: f"{it.artists} - {it.name}" for it in window}
 
         # Removals: by URI (Spotify removes every occurrence), never a protected song.
         remove_uris = [window[i].uri for i in plan.removals if window[i].uri not in protected_uris]
@@ -439,6 +461,7 @@ class PlaylistSession:
             # p is None for "append at the end"
             pos = None if p is None else min(cur + 1 + max(0, p - 1 - n_manual), length)
             self.client.playlist_add(self.playlist_id, [track.uri], position=pos)
+            self.added_keys.add(song_key(track.name, track.artists))
             length += 1
             added.append(f"{track.artists} - {track.name}")
             if plan.direction is not None:
@@ -478,11 +501,11 @@ class PlaylistSession:
                      reason, f"({self.mood[0]:.2f}, {self.mood[1]:.2f})" if self.mood else "unknown",
                      self.deviation or 0.0, len(added), len(removed_names))
 
-    def _advance_snapshot(self, uri: str) -> bool:
+    def _advance_snapshot(self, key: str) -> bool:
         """Find the song now playing in Spotify's copy of the playlist; False if it isn't there
         (it's from Spotify's own queue)."""
         for i in range(self._snap_index, len(self._snapshot)):
-            if self._snapshot[i] == uri:
+            if self._snapshot[i] == key:
                 self._snap_index = i
                 return True
         return False
@@ -490,7 +513,7 @@ class PlaylistSession:
     def _after_resync(self, entries: list[Item] | None, index: int) -> None:
         if entries is None:
             entries = self.client.playlist_items(self.playlist_id)
-        self._snapshot, self._snap_index = [e.uri for e in entries], index
+        self._snapshot, self._snap_index = [e.key for e in entries], index
         self._handover_at = self.clock.now()  # Spotify may briefly report the source oddly again
         self._resync_pending = False
         self.resyncs += 1
@@ -539,24 +562,35 @@ class PlaylistSession:
         return [(None, t) for t in picks]
 
     # ------------------------------------------------------------- song events (from polling)
-    def note_started(self, track_id: str) -> None:
+    def note_started(self, track_id: str, name: str | None = None, artists: str | None = None) -> None:
+        key = song_key(name, artists) if name is not None else None
         if self.active:
             self.played_ids.add(track_id)
-            self._advance_mood(f"spotify:track:{track_id}")
+            if key:
+                self.played_keys.add(key)
+                self._advance_mood(key)
         self.recent.append(track_id)
 
-    def _advance_mood(self, uri: str) -> None:
-        """A new song started: drop the songs before it from the last window and re-average at once,
-        so the sidebar's mood moves with the song instead of waiting for the next cycle."""
-        uris = [u for u, _ in self._window_points]
-        if uri not in uris:
+    def _advance_mood(self, key: str) -> None:
+        """A new song started: drop the songs before it from the last window and re-average at once
+        (the song playing + the user's own songs ahead), so the sidebar's mood moves with the song."""
+        keys = [k for k, _, _ in self._window_points]
+        if key not in keys:
             return
-        self._window_points = self._window_points[uris.index(uri):]
-        pts = [p for _, p in self._window_points[: self.selection.window_size] if p is not None]
+        self._window_points = self._window_points[keys.index(key):]
+        seen, pts = set(), []
+        for i, (k, p, ours) in enumerate(self._window_points):
+            if (i > 0 and ours) or k in seen:
+                continue
+            seen.add(k)
+            if p is not None:
+                pts.append(p)
+            if len(seen) >= self.selection.window_size:
+                break
         if pts:
             self.mood = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
         if self.trace is not None:
-            self.trace.song(self._window_names.get(uri, uri), self._window_points[0][1], self.mood, self._target)
+            self.trace.song(self._window_names.get(key, key), self._window_points[0][1], self.mood, self._target)
 
     def take_intervention(self, ended_track_id: str) -> tuple[str, Direction | None]:
         direction = self.pending.pop(ended_track_id, None)

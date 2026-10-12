@@ -251,3 +251,13 @@ class TestPlanCycle:
         items = [WindowItem(t.uri, t.name, t.artists, t.features) for t in table.tracks[:5]]
         plan = plan_cycle(items, table, TARGET, self.chain(), np.random.default_rng(0), P, set())
         assert not {t.id for _, t in plan.insertions} & {it.track_id for it in items}
+
+
+def test_listening_mood_counts_the_song_playing_and_the_users_songs_once():
+    from backend.selection import listening_mood
+    now = WindowItem("spotify:track:a", "A", "x", feats(0.2, 0.2), ours=True)   # Moodly's, but playing: counts
+    mine = WindowItem("spotify:track:b", "B", "x", feats(0.4, 0.4))
+    again = WindowItem("spotify:track:b2", "B", "x", feats(0.4, 0.4))          # same song, relinked id
+    pick = WindowItem("spotify:track:c", "C", "x", feats(0.9, 0.9), ours=True)  # not played yet: doesn't
+    assert listening_mood([now, mine, again, pick]) == pytest.approx((0.3, 0.3))
+    assert queue_mood([now, mine, again, pick]) == pytest.approx((0.475, 0.475))  # the queue's heading

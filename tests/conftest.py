@@ -18,7 +18,7 @@ def tmp_config(tmp_path) -> Path:
     shutil.copy(ROOT / "config" / "config.json", path)
     cfg = json.loads(path.read_text(encoding="utf-8"))
     # Tests expect the defaults, whatever the user last picked in the sidebar.
-    cfg["target_mood"], cfg["paused"] = "focused", False
+    cfg["target_mood"], cfg["paused"], cfg["song_source"] = "focused", False, {"kind": "general"}
     cfg["target"] = {"valence": cfg["moods"]["focused"]["valence"], "energy": cfg["moods"]["focused"]["energy"]}
     cfg["paths"] = {"db": str(tmp_path / "mood.db"), "state": str(tmp_path / "state.json"),
                     "tracks_csv": str(tmp_path / "tracks.csv")}

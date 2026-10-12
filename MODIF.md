@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M25 · Songs from one of your playlists or Liked Songs (at the end, after the summary).
+**Latest:** M26 · Good songs no longer removed; the mood is what you listen to (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M24)
+## Summary of earlier modifications (M1–M25)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -34,53 +34,48 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M22 | 10-12 | **Player controls, album cover, sync under 1 s, simpler mood path view** | The mood path page was hard to read; the sidebar lacked a cover and player buttons; sync took up to 3 s. | Cover art, Play/Pause and Next (sidebar → `data/player.cmd` → daemon → Spotify), a time readout, a small mood map at the side; polling 0.75 s / 2 s; the mood path page rewritten around "right now", "up next" and what Moodly did. 237 tests. |
 | M23 | 10-12 | **Release 0.3.0 for Windows and Mac** | The new frontend and backend were only on `dev`. | `dev` merged into `main`; `v0.3.0` published with the Windows installer and both Mac `.dmg` files and plain-language notes (including "turn off Repeat"). |
 | M24 | 10-12 | **A link to the mood path dashboard (dev only)** | Opening the dashboard took a separate command. | `tools/dev_dashboard.ps1`/`.sh` run the app with the trace; the app serves the dashboard and shows a link in the sidebar and tray menu. Never in the installed app; `dev` only. 238 tests. |
+| M25 | 10-12 | **Songs from one of your playlists or Liked Songs** | Users wanted songs from a playlist of theirs, not only the general search. | A "Songs:" picker (For you / Liked Songs / own playlists); a playlist pool has no language filter, no top-up, repeats allowed, ready once read; "no songs closer" note. 242 tests. |
 
 ---
 
-## M25 · Songs from one of your playlists or Liked Songs · 2026-10-12 · `🆕 LATEST`
+## M26 · Good songs no longer removed; the mood is what you listen to · 2026-10-12 · `🆕 LATEST`
 
-**Request:** users can choose where the songs come from:
-- **general**, as now (taste, mood, languages)
-- **one of their playlists**: the pool is the playlist's songs
-
-**Decisions (asked):**
-- With a playlist, **stay in the playlist**. The mood gets as close to the target as the playlist allows, the sidebar says so, and songs may repeat.
-- **Liked Songs** is offered too.
-
-**Checked first:** with the app's access, Spotify returns the songs of the user's own playlists ("Eng songs", "Melody") but answers 403 for playlists they only follow. So only own and collaborative playlists are listed.
+**Problems (found while testing, 14:25–14:32):**
+1. The session removed almost all songs, including good picks: 13 of the user's songs at 14:25:23 and 14 of Moodly's picks at 14:31:05. Then, with the queue empty, the "mood" was a single song (*Pal Pal*, 0.25/0.60), so it jumped far from the target.
+   - **Cause:** not the far-from-both rule (at most 2 per cycle) but the duplicate rule.
+   - Spotify (market IN) reports some songs under a **relinked id** that differs from the id in the playlist. The queue then never matched the playlist, so it was all taken as the user's own "Add to queue" songs, and every playlist song looked like a duplicate of them.
+   - The same relinking hid the song playing in the playlist (*Bandhu 2.0*).
+   - Spotify's Repeat was off, so it wasn't Repeat.
+2. Right after a new target, songs were removed for being far from the target alone. The user's rule is: far from both the mood and the target.
+3. The mood averaged Moodly's upcoming picks too, so it didn't match what was playing (e.g. *Channa Mereya*).
 
 **Modifications:**
-1. **Spotify client** (`backend/spotify/client.py`):
-   - `my_playlists_raw()` (own and collaborative), `playlist_tracks_raw()`, `saved_tracks_raw()`, `saved_tracks_count()`
-   - the mock gets `user_playlists` and `liked` for tests
-2. **Recommender** (`recommender/engine.py`):
-   - `source` (`normalize_source`, `source_label`), `set_source()` and `custom`.
-   - When a playlist or Liked Songs is chosen, `refresh()` builds the pool from those songs (`_source_pool`): any language, taste 0.5 for all (so taste doesn't reorder them), one copy each, and songs with features only (the others are analysed on later refreshes).
-   - `prune()` keeps the pool whole, and `loaded` marks that it has been read.
-3. **Session** (`backend/actuators/session.py`):
-   - `allow_repeats`: the keep-going fill plays the playlist's songs again when the unplayed ones run out.
-   - `source_dry`: set when a cycle had a waypoint but nothing in the playlist was closer to the target.
-4. **Daemon** (`backend/daemon.py`):
-   - reads `song_source` at start and on every config change. A change during a session clears the pool and prepares again.
-   - a playlist pool goes to the session with no language filter and no catalog fallback.
-   - it's ready as soon as it has been read (no waiting for 15 songs).
-   - the playlist list and Liked Songs count are read every 10 min (the session playlist is left out).
-   - the state has `song_source`, `playlists`, `liked_count` and `session.source_dry`.
-5. **Sidebar** (`frontend/components.py`, `frontend/app.py`):
-   - A **"♫ Songs: For you"** row in the Session section opens a dark-glass picker: For you · Liked Songs (count) · your playlists (counts; empty ones disabled; the current one ticked).
-   - The choice is saved with `set_song_source()` (`shared/config_io.py`).
-   - Status lines: "Reading Melody - nothing is added until then" while it loads, and "Melody has no songs closer to the target - this is as close as it gets".
-6. `config.json`: `"song_source": {"kind": "general"}`.
-7. **Docs:** SPEC (song source, acceptance), MANUAL (the Songs row).
+1. **Songs are recognised by title + artists** (`song_key`, `Item.key`, `WindowItem.key`). This applies to:
+   - finding the song playing in the playlist
+   - matching Spotify's queue to the playlist
+   - Spotify's copy of the playlist (snapshot)
+   - "already played" (`played_keys`; `note_started` now gets the title and artists)
+   - the duplicate check
+2. **Misread-queue guard:**
+   - When "the user's own queue" is mostly playlist songs that weren't copied in at hand-over, the queue was misread. It is then treated as the playlist, and nothing is removed on that basis (`max_manual_overlap` = 3).
+   - Only songs that already played, or the user's real queued songs, count as duplicates.
+3. **One removal rule:** `choose_removals` (far from both the mood and the target) also applies after a new target, with its cap of 5. The far-from-target-only rule (`choose_retarget_removals`) is gone.
+4. **Mood = what the user listens to** (`listening_mood`):
+   - It averages the song playing (whoever picked it) and the user's own songs ahead (their queued songs, or the playlist they were playing at the start), each once, up to 20.
+   - Moodly's picks (`added_keys`, `WindowItem.ours`) count once they play.
+   - The same rule applies when a song starts (`_advance_mood`).
+5. **Planning:**
+   - The Markov step starts from where the whole queue is heading (`CyclePlan.ahead`, the old average), so each new pick goes one step further.
+   - Removals, "settled" and the shown mood use the listening mood.
+   - The trace records `ahead` and each window song's `ours` flag.
+6. Tests start from "For you", whatever was last picked in the sidebar (`conftest.py`).
+7. **Docs:** SPEC (mood, removal rule, relinking), MANUAL (how fast).
 
-**Checked on screen:** the row fits under SESSION, and the picker shows the tick and greyed-out empty playlists.
+**Tests:** 247 pass. New:
+- relinked ids in Spotify's queue remove nothing
+- a queue that doesn't line up removes nothing
+- the mood is the song playing plus the user's songs, not Moodly's picks
+- `listening_mood` counts each song once and skips Moodly's upcoming picks
+- after a new target, songs near the mood stay and only songs far from both go
 
-**Tests:** 242 pass. New:
-- the recommender builds the whole playlist / Liked Songs pool (any language, no copies, waits for missing data, keeps everything on prune, no id → For you)
-- daemon end to end: switching to a playlist clears and prepares, it's ready at once, the session gets only the playlist with no language filter or fallback and with repeats, and every song added is from it; switching back restores For you
-- the picker lists only own playlists and never the session playlist
-- the sidebar picker lists the sources, saves the choice and shows the status lines
-
-**Not done / limits:**
-- Up to 500 songs per playlist / Liked Songs.
-- Songs without mood data are analysed 20 per refresh (preview analysis), so a big playlist fills in over a few minutes.
+Changed: the old "new target clears songs far from it" test.

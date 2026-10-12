@@ -85,6 +85,16 @@ class Item:
     def id(self) -> str:
         return self.uri.rsplit(":", 1)[-1]
 
+    @property
+    def key(self) -> str:
+        return song_key(self.name, self.artists)
+
+
+def song_key(name: str, artists: str) -> str:
+    """A song's identity by title and artists. Spotify relinks tracks per country, so the same song can
+    show up with a different id in the queue than in the playlist; the title and artists stay the same."""
+    return f"{name}|{artists}".casefold().strip()
+
 
 @dataclass(frozen=True)
 class PlayerState:

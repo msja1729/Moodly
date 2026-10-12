@@ -85,6 +85,7 @@ class WindowItem:
     features: Features | None = None
     kind: str = "track"          # "track" or "episode"
     removable: bool = True       # False: now playing, next, episodes, the user's own Spotify queue
+    ours: bool = False           # added by Moodly (not counted in the mood until it plays)
 
     @property
     def track_id(self) -> str | None:
@@ -94,12 +95,36 @@ class WindowItem:
     def point(self) -> Point | None:
         return self.features.point if self.features is not None else None
 
+    @property
+    def key(self) -> str:
+        return f"{self.name}|{self.artists}".casefold().strip()
+
 
 # --------------------------------------------------------------------------- mood
 
 def queue_mood(items: Sequence[WindowItem], window_size: int | None = None) -> Point | None:
-    """Plain average (valence, arousal) of the window's songs with a known point."""
+    """Plain average (valence, arousal) of the window's songs with a known point: where the whole queue,
+    Moodly's picks included, is heading. Used to place the next Markov step."""
     pts = [it.point for it in (items[:window_size] if window_size else items) if it.point is not None]
+    if not pts:
+        return None
+    return (float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts])))
+
+
+def listening_mood(items: Sequence[WindowItem], window_size: int | None = None) -> Point | None:
+    """The mood: what the user is actually listening to. The song playing (whoever picked it) plus the
+    user's own songs ahead: their queue, or the playlist they were playing. Moodly's picks still ahead
+    don't count until they play. Each song once (Spotify can list a song twice)."""
+    seen: set[str] = set()
+    pts = []
+    for i, it in enumerate(items):
+        if (i > 0 and it.ours) or it.key in seen:
+            continue
+        seen.add(it.key)
+        if it.point is not None:
+            pts.append(it.point)
+        if window_size and len(seen) >= window_size:
+            break
     if not pts:
         return None
     return (float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts])))
@@ -347,29 +372,16 @@ def random_positions(items: Sequence[WindowItem], picks: Sequence[CatalogTrack],
     return out
 
 
-def choose_retarget_removals(items: Sequence[WindowItem], target: Point, params: SelectionParams) -> list[int]:
-    """Right after the user picks a new target: upcoming songs far from it (farthest first), capped.
-
-    Same protections as choose_removals: positions 0-1, non-removable items,
-    songs without a point, and the minimum queue length.
-    """
-    upcoming = len(items) - 1
-    budget = min(params.max_removals_on_retarget, max(0, upcoming - params.min_length))
-    far = [(distance(it.point, target), i) for i, it in enumerate(items)
-           if i >= params.protect_head and it.removable and it.point is not None
-           and distance(it.point, target) > params.remove_radius_target]
-    far.sort(reverse=True)
-    return sorted(i for _, i in far[:budget])
-
-
-def choose_removals(items: Sequence[WindowItem], mood: Point, target: Point, params: SelectionParams) -> list[int]:
-    """Indices (into `items`) of upcoming songs far from both the mood and the target.
+def choose_removals(items: Sequence[WindowItem], mood: Point, target: Point, params: SelectionParams,
+                    cap: int | None = None) -> list[int]:
+    """Indices (into `items`) of upcoming songs far from both the mood and the target. The only rule
+    for removing a song (also right after a new target, with a larger `cap`).
 
     Never touches protected positions or non-removable items; at most
-    max_removals_per_cycle; never leaves fewer than min_length upcoming.
+    max_removals_per_cycle (or `cap`); never leaves fewer than min_length upcoming.
     """
     upcoming = len(items) - 1
-    budget = min(params.max_removals_per_cycle, max(0, upcoming - params.min_length))
+    budget = min(params.max_removals_per_cycle if cap is None else cap, max(0, upcoming - params.min_length))
     if budget <= 0:
         return []
     far: list[tuple[float, int]] = []
@@ -387,9 +399,10 @@ def choose_removals(items: Sequence[WindowItem], mood: Point, target: Point, par
 
 @dataclass
 class CyclePlan:
-    mood: Point | None
+    mood: Point | None                 # what the user is listening to (listening_mood)
     deviation: float | None
     waypoint: Point | None = None
+    ahead: Point | None = None         # where the whole queue, Moodly's picks included, is heading
     direction: Direction | None = None
     settled: bool = False
     removals: list[int] = field(default_factory=list)                 # indices into the window
@@ -403,15 +416,17 @@ def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, ch
 
     `retarget`: the user just picked a new target, so songs far from it are cleared out.
     """
-    mood = queue_mood(items, params.window_size)
+    ahead = queue_mood(items, params.window_size)
+    mood = listening_mood(items, params.window_size) or ahead
     if mood is None:
         return CyclePlan(None, None)
     dev = distance(mood, target)
     settled = dev <= params.settle_radius
-    plan = CyclePlan(mood, dev, settled=settled)
+    plan = CyclePlan(mood, dev, settled=settled, ahead=ahead)
 
+    # Only songs far from both the mood and the target leave the queue (a few more right after a new target).
     if retarget:
-        plan.removals = choose_retarget_removals(items, target, params)
+        plan.removals = choose_removals(items, mood, target, params, cap=params.max_removals_on_retarget)
     elif not settled:
         plan.removals = choose_removals(items, mood, target, params)
     kept = [it for i, it in enumerate(items) if i not in set(plan.removals)]
@@ -432,7 +447,8 @@ def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, ch
     if settled:
         plan.waypoint, plan.direction = target, (0, 0)
     else:
-        plan.waypoint, plan.direction = chain.next_waypoint(mood, rng)
+        # Step on from where the queue is heading, so each new pick goes one step further.
+        plan.waypoint, plan.direction = chain.next_waypoint(ahead or mood, rng)
     context = MusicalContext.of(kept)
     window_ids = {it.track_id for it in items if it.track_id}
     idx, scores = rank_candidates(table, plan.waypoint, mood, target, context, exclude_ids | window_ids,

@@ -244,7 +244,7 @@ If the status card says **"Daemon not running"**, the daemon isn't running or ha
 - **Your own "Add to queue" songs** still play first and count toward your mood, and they're never removed.
 - **If you pause Spotify,** the app waits. **If you start other music,** the app stops and deletes its playlist (the sidebar says so). Click **New session** to start again.
 - **When it ends** (End session, New session, quitting, logging out): the next 10 songs go to your normal queue so the music continues, the playlist is deleted, and the song pool is cleared. A playlist left behind by a crash is deleted the next time a session starts.
-- **How fast:** your mood is the average of about 20 songs, so it moves as songs play. A big change (e.g. Energized → Wind Down) takes roughly 2–3 hours with the catalog imported; small changes are quicker.
+- **How fast:** your mood is the average of the song playing and your own songs ahead (up to 20). Songs the app added count once they play, so the mood moves as you actually hear them. A big change (e.g. Energized → Wind Down) takes roughly 2–3 hours with the catalog imported; small changes are quicker.
 
 ### Phase 1 mode (`audio.mode = "queue"`)
 
