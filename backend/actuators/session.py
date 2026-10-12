@@ -133,6 +133,7 @@ class PlaylistSession:
         self.table = table
         self.fallback_table: TrackTable | None = None
         self.preparing = False         # pool being filled: measure only, don't add or remove
+        self._window_points: list[tuple[str, Point | None]] = []  # last window seen: (uri, point)
         self.needs_more_songs = False  # the pool had nothing near the last mood step
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
@@ -399,6 +400,7 @@ class PlaylistSession:
                 plan.insertions = []
                 self.needs_more_songs = True
         self.mood, self.deviation = plan.mood, plan.deviation
+        self._window_points = [(it.uri, it.point) for it in window]
 
         # Removals: by URI (Spotify removes every occurrence), never a protected song.
         remove_uris = [window[i].uri for i in plan.removals if window[i].uri not in protected_uris]
@@ -513,7 +515,19 @@ class PlaylistSession:
     def note_started(self, track_id: str) -> None:
         if self.active:
             self.played_ids.add(track_id)
+            self._advance_mood(f"spotify:track:{track_id}")
         self.recent.append(track_id)
+
+    def _advance_mood(self, uri: str) -> None:
+        """A new song started: drop the songs before it from the last window and re-average at once,
+        so the sidebar's mood moves with the song instead of waiting for the next cycle."""
+        uris = [u for u, _ in self._window_points]
+        if uri not in uris:
+            return
+        self._window_points = self._window_points[uris.index(uri):]
+        pts = [p for _, p in self._window_points[: self.selection.window_size] if p is not None]
+        if pts:
+            self.mood = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
 
     def take_intervention(self, ended_track_id: str) -> tuple[str, Direction | None]:
         direction = self.pending.pop(ended_track_id, None)

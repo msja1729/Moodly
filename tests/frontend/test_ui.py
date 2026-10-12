@@ -196,3 +196,44 @@ def test_quit_file_closes_an_open_dialog(qtbot, tmp_path, monkeypatch):
     qtbot.waitUntil(lambda: not dialog.isVisible(), timeout=2000)
     assert dialog.result() == QDialog.DialogCode.Rejected
     timer.stop()
+
+
+def test_state_file_change_shows_at_once(qtbot, tmp_config):
+    # A long fallback timer: only the file watcher can make this pass in time.
+    app = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000)
+    qtbot.addWidget(app.window)
+    state = {"updated": time.time(), "mood": [0.3, 0.2], "track": "X - Y", "track_name": "Kesariya",
+             "track_artists": "Pritam, Arijit Singh", "progress_ms": 60_000, "duration_ms": 240_000,
+             "is_playing": True, "observed_at": time.time(), "paused": False}
+    from shared.config_io import atomic_write_json
+    atomic_write_json(tmp_config.parent / "state.json", state)
+    qtbot.waitUntil(lambda: app.panel.now_playing.text() == "Kesariya", timeout=1000)
+    assert app.panel.artist.text() == "Pritam, Arijit Singh"
+    assert 0.24 < app.panel.progress.fraction < 0.3
+    assert app.panel.map.mood == (0.3, 0.2)
+    app.timer.stop()
+    app.tray.hide()
+
+
+def test_glass_tint_follows_the_mood(qtbot, tmp_config):
+    from frontend.components import mood_color
+
+    hues = {name: mood_color(pt).hsvHue() for name, pt in
+            {"happy+energetic": (0.9, 0.9), "tense": (0.1, 0.9), "sad": (0.1, 0.1), "calm": (0.9, 0.1)}.items()}
+    assert len(set(hues.values())) == 4                           # four corners, four colours
+    assert 20 <= hues["happy+energetic"] <= 50                    # amber
+    assert 150 <= hues["calm"] <= 185                             # teal
+    assert mood_color((0.5, 0.5)).hsvSaturationF() < mood_color((0.95, 0.95)).hsvSaturationF()
+
+    app = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000)
+    qtbot.addWidget(app.window)
+    app.show_sidebar()
+    qtbot.waitExposed(app.window)
+    from shared.config_io import atomic_write_json
+    atomic_write_json(tmp_config.parent / "state.json", {"updated": time.time(), "mood": [0.9, 0.1], "paused": False})
+    target = mood_color((0.9, 0.1))
+    qtbot.waitUntil(lambda: app.window.tint == target, timeout=3000)  # the daemon's new mood -> glided there
+    assert app.panel.tiles["calm"].marked                             # the closest mood gets the dot
+    assert not app.window.grab().isNull()
+    app.timer.stop()
+    app.tray.hide()

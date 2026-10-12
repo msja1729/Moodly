@@ -32,6 +32,7 @@ Status: 🔴 open · 🟡 partly addressed / needs a live check · 🟢 fixed
 | 22 | **The Mac app is untested on a real Mac.** Only GitHub's Mac build and its smoke test (packaged daemon, mock session) run. | Tray/menu-bar behaviour, Spotify sign-in and the sidebar on macOS are unverified. | 🔴 Try the .dmg on a Mac. |
 | 23 | **The Mac app isn't signed or notarized** (needs an Apple Developer ID, $99/year). | macOS blocks the first launch until the user allows it in System Settings → Privacy & Security. | 🟡 Explained in the release notes. |
 | 24 | **No screen warmth on Mac** (only Windows gamma ramps and Linux xrandr exist). | The display part of a mood does nothing on a Mac. | 🔴 Possible later via CoreGraphics `CGSetDisplayTransferByFormula`. |
+| 25 | **Polling Spotify every 3 s** (M17) for an on-the-spot sidebar: ~20 calls a minute per user, plus session calls. Spotify doesn't publish its limit. | Possible 429s with several users on one Spotify app. | 🟡 429s back off automatically; raise `inference.poll_min_s` if they appear in `daemon.log`. |
 | 15 | **Windows limits screen warmth** to about 3400–4000 K unless a registry value is set. | Wind Down can't get as warm as configured. | 🟢 Detected and clamped; registry fix documented in the README. |
 
 ## Fixed

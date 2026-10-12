@@ -116,6 +116,10 @@ For a much bigger pool of bridging tracks, download a dataset with `track_id, va
 
 ## Run
 
+![The sidebar in three moods](docs/sidebar.png)
+
+The sidebar is a frosted-glass panel whose colour follows how your music feels (amber = happy and energetic, rose = tense, violet = sad, teal = calm). The song, progress and mood dot update within ~3 s of a song change.
+
 ```powershell
 .venv\Scripts\python -m frontend.app              # the tray UI; it starts and stops the daemon itself
 ```
@@ -183,7 +187,7 @@ New songs come from a live **taste pool**: songs by the user's favourite artists
 - `session`: `cycle_s` (90), `window_size` (20), `target_length` (15), `min_length` (8), `max_adds_per_cycle` (3), `max_removals_per_cycle` (2), `remove_radius_mood`/`remove_radius_target` (0.35), `search_radius` (0.08), the musical weights `w_tempo`, `w_key`, `w_loudness`, `w_feel`, `w_energy_jump`, `mmr_lambda`, `settle_radius`, `allow_explicit`, `handback_count`.
 - `audio.deviation_threshold` (default 0.2, queue mode): bridging starts only when the mood is further than this from the target.
 - `audio.cooldown_s`: minimum gap between bridging tracks.
-- `inference`: `ema_alpha`, `skip_weight`, `skip_threshold`, and the poll range `poll_min_s`/`poll_max_s` (30–60 s).
+- `inference`: `ema_alpha`, `skip_weight`, `skip_threshold`, and polling: `poll_min_s` (3 s while music plays) / `poll_max_s` (15 s when paused or idle).
 - `display`: `step_kelvin`, `step_interval_s`, `min_kelvin`, `max_kelvin`.
 
 ## Notes

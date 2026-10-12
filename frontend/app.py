@@ -1,4 +1,4 @@
-"""Tray icon + frosted-glass sidebar.
+"""Tray icon + frosted-glass sidebar whose colour follows the mood.
 
     python -m frontend.app              # starts and stops the daemon itself
     python -m frontend.app --no-daemon  # development: run `python -m backend.daemon` yourself
@@ -6,8 +6,13 @@
 Clicking the tray icon toggles a frameless sidebar anchored above the
 taskbar. On Windows 10/11 the window gets the Acrylic blur-behind material
 via SetWindowCompositionAttribute (plus rounded corners on Windows 11); on
-other platforms a translucent tint is painted instead. Mood clicks write
-config.json directly (atomic replace), which the daemon picks up.
+other platforms a translucent tint is painted instead. Over it the window
+paints the glass of the reference design (Glass design UI.jpg): a tint from
+the current mood that glides to each new colour, a dark diagonal band, a soft
+highlight and a thin bright border. Mood clicks write config.json directly
+(atomic replace), which the daemon picks up. The sidebar re-reads
+data/state.json the moment the daemon replaces it (file watcher), so the song,
+progress and mood dot change together.
 """
 from __future__ import annotations
 
@@ -19,21 +24,22 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer
-from PyQt6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt6.QtCore import QEvent, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtGui import (QAction, QColor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPainterPath, QPen,
+                         QPixmap, QRadialGradient)
 from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
-from frontend.components import SidebarPanel
+from frontend.components import DEFAULT_TINT, SidebarPanel, blend
 from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, ensure_app_home, load_config,
                               resolve_path, set_paused, set_target_mood, start_new_session)
 
 log = logging.getLogger("ui")
 
-SIDEBAR_SIZE = (340, 560)
-RADIUS = 16
+SIDEBAR_SIZE = (330, 680)
+RADIUS = 24
 
 
-def enable_acrylic(hwnd: int, tint_abgr: int = 0x991C1C22) -> bool:
+def enable_acrylic(hwnd: int, tint_abgr: int = 0x40140A10) -> bool:
     """Windows 10/11 Acrylic blur behind a frameless window. Returns success."""
     if sys.platform != "win32":
         return False
@@ -66,7 +72,9 @@ def enable_acrylic(hwnd: int, tint_abgr: int = 0x991C1C22) -> bool:
 
 
 class GlassWindow(QWidget):
-    """Frameless, translucent tool window that hosts the sidebar panel."""
+    """Frameless, translucent tool window that hosts the sidebar panel and paints its glass."""
+
+    GLIDE_MS = 900  # a new tint is reached over about this long
 
     def __init__(self, panel: SidebarPanel):
         super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
@@ -80,6 +88,33 @@ class GlassWindow(QWidget):
         layout.addWidget(panel)
         self.acrylic = False
         self.hidden_at = 0.0
+        self.tint = QColor(DEFAULT_TINT)
+        self._from = QColor(self.tint)
+        self._to = QColor(self.tint)
+        self._glide_start = 0.0
+        self._glide = QTimer(self)
+        self._glide.timeout.connect(self._glide_step)
+        panel.tintChanged.connect(self.set_tint)
+        panel.closeRequested.connect(self.hide)
+
+    def set_tint(self, color: QColor) -> None:
+        """Glide from the current tint to `color`."""
+        if color == self._to:
+            return
+        self._from, self._to = QColor(self.tint), QColor(color)
+        self._glide_start = time.monotonic()
+        if self.isVisible():
+            self._glide.start(16)
+        else:
+            self.tint = QColor(color)
+
+    def _glide_step(self) -> None:
+        t = min(1.0, (time.monotonic() - self._glide_start) * 1000 / self.GLIDE_MS)
+        t = t * t * (3 - 2 * t)  # ease in and out
+        self.tint = blend(self._from, self._to, t)
+        self.update()
+        if t >= 1.0:
+            self._glide.stop()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -89,11 +124,47 @@ class GlassWindow(QWidget):
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
-        # Over acrylic a light tint is enough; without it, paint a denser "glass".
-        p.fillPath(path, QColor(28, 28, 34, 70 if self.acrylic else 228))
-        p.setPen(QPen(QColor(255, 255, 255, 38), 1))
+        path.addRoundedRect(r, RADIUS, RADIUS)
+        p.setClipPath(path)
+        w, h = r.width(), r.height()
+        dense = 0 if self.acrylic else 40  # without the OS blur behind, a slightly denser glass
+
+        # 1. Tinted glass: deep at the top, brighter towards the bottom.
+        base = QLinearGradient(0, 0, 0, h)
+        top, mid, low = self.tint.darker(300), self.tint.darker(125), QColor(self.tint)
+        top.setAlpha(215 + dense // 2)
+        mid.setAlpha(175 + dense)
+        low.setAlpha(170 + dense)
+        base.setColorAt(0.0, top)
+        base.setColorAt(0.45, mid)
+        base.setColorAt(1.0, low)
+        p.fillPath(path, base)
+
+        # 2. The dark diagonal bands that make it read as glass (as in the reference).
+        for start, end, stops in (((0.0, 0.05), (1.0, 0.45), (0.0, 0.42, 0.60, 0.80)),
+                                  ((0.0, 0.55), (1.0, 0.95), (0.55, 0.78, 0.90, 1.0))):
+            band = QLinearGradient(w * start[0], h * start[1], w * end[0], h * end[1])
+            band.setColorAt(stops[0], QColor(8, 4, 8, 0))
+            band.setColorAt(stops[1], QColor(8, 4, 8, 120))
+            band.setColorAt(stops[2], QColor(8, 4, 8, 60))
+            band.setColorAt(stops[3], QColor(8, 4, 8, 0))
+            p.fillPath(path, band)
+
+        # 3. A soft highlight where light would catch the glass.
+        glow = QRadialGradient(QPointF(w * 0.2, h * 0.55), w * 0.9)
+        glow.setColorAt(0.0, QColor(255, 255, 255, 34))
+        glow.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.fillPath(path, glow)
+
+        # 4. A thin bright edge, slightly tinted.
+        p.setClipping(False)
+        edge = QLinearGradient(0, 0, w, h)
+        edge.setColorAt(0.0, QColor(255, 255, 255, 120))
+        edge.setColorAt(0.5, blend(QColor(255, 255, 255, 40), self.tint, 0.5))
+        edge.setColorAt(1.0, QColor(255, 255, 255, 90))
+        p.setPen(QPen(edge, 1.2))
         p.drawPath(path)
 
     def event(self, e) -> bool:
@@ -179,9 +250,20 @@ class MoodTrayApp:
         self.refresh()
         self.tray.show()
 
-        self.timer = QTimer()
+        self.timer = QTimer()  # a fallback; the file watcher below catches changes at once
         self.timer.timeout.connect(self.refresh)
         self.timer.start(poll_ms)
+
+        # The daemon replaces data/state.json atomically (a rename), so watch its folder and the file.
+        self.watcher = QFileSystemWatcher()
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.watcher.addPath(str(self.state_path.parent))
+        self.watcher.directoryChanged.connect(self._state_touched)
+        self.watcher.fileChanged.connect(self._state_touched)
+        self._debounce = QTimer()
+        self._debounce.setSingleShot(True)
+        self._debounce.timeout.connect(self.refresh)
+        self._state_touched()
 
     # ----------------------------------------------------------- actions
     def select_mood(self, key: str) -> float:
@@ -250,6 +332,12 @@ class MoodTrayApp:
         self.window.activateWindow()
 
     # ----------------------------------------------------------- state
+    def _state_touched(self, _path: str = "") -> None:
+        """The daemon wrote new state: show it right away (several events per write are merged)."""
+        if self.state_path.exists() and str(self.state_path) not in self.watcher.files():
+            self.watcher.addPath(str(self.state_path))  # re-arm: an atomic replace drops the old watch
+        self._debounce.start(30)
+
     def read_state(self) -> dict | None:
         try:
             with open(self.state_path, encoding="utf-8") as f:

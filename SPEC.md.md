@@ -4,7 +4,19 @@
 A background daemon and lightweight desktop UI that monitors a user's emotional state via their active music listening habits and subtly nudges their environment (audio queue, IDE/terminal themes, and screen temperature) toward a user-selected target mood without interrupting active work.
 
 ## Architecture
-*   **Frontend (The Sidebar UI):** A lightweight desktop application using **PyQt6**. The UI must be frameless and implement a translucent, frosted glass effect (macOS vibrancy/Windows 11 Acrylic) mimicking a modern OS control center. It runs in the system tray and provides toggle buttons for target moods.
+*   **Frontend (The Sidebar UI):** A lightweight desktop application using **PyQt6**. It runs in the system tray (the menu bar on macOS) and opens a frameless sidebar next to it.
+    *   **Glass design** (after `Glass design UI.jpg`, preview in `docs/sidebar.png`): a tall panel with 24 px rounded corners, frosted translucent glass (Windows 11 Acrylic blur behind when available) tinted in one colour, two dark diagonal bands, a soft highlight and a thin bright border.
+    *   **Layout, top to bottom:** window dots (red hides the sidebar); the title "Ambient Mood"; fading dividers between the sections listed below.
+        1. **NOW PLAYING:** song, artist, a live progress bar; the mood map (current mood white, target tinted, dashed gap); a status line.
+        2. **MOODS:** one row per target mood (glyph + label). The selected one is a lighter glass pill with a white bar on the panel edge and a chevron. A dot marks the mood closest to how the music feels now.
+        3. **SESSION:** Start session, or End / New session.
+        4. **Account row:** avatar initial, name, "Spotify Premium", and round Log out / Quit buttons.
+    *   **Dynamic colour:** the glass tint comes from the **current mood**, or the target before a mood is known.
+        *   The hue is set by the direction from neutral: happy+energetic amber, tense rose, sad violet, calm teal, blended in between.
+        *   The richness is set by the distance from neutral.
+        *   The tint glides to each new colour over ~0.9 s.
+        *   The selected row, the target dot and the avatar pick up the tint.
+    *   **In sync, on the spot:** the song, artist, progress and mood dot change together as soon as the song changes. The daemon polls Spotify every 3 s while music plays and right after the song is due to end. On a song change it re-averages the mood at once from the remaining window, without waiting for a cycle. It writes `data/state.json` immediately when anything visible changes (otherwise every 10 s). The sidebar redraws when that file is replaced (file watcher), and moves the progress bar itself between updates.
 *   **Backend (The Daemon):** A headless Python process managing the Spotify polling, Markov chain math, and environment actuators.
 *   **Inter-Process Communication:** The frontend UI writes the user's selected mood to `config.json`. The backend daemon uses a file watcher to instantly detect updates to this file and adjust its target coordinates on the fly.
 *   **Audio Data Provider:** A `FeatureProvider` fallback chain (Spotify API -> ReccoBeats API -> Local CSV; the recommender adds iTunes preview -> ReccoBeats audio analysis as the last step) to bypass Spotify's deprecated `/audio-features` endpoint for new developer apps.
@@ -82,7 +94,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
     *   Phase 3 adds no Spotify scope: it uses top tracks (`user-top-read`), search and single-track lookups. Since February 2026 Spotify returns no artist genres and no popularity, has no new-releases or artist-top-tracks endpoints, and gives at most 10 search results per page.
     *   Phase 3 uses free services that need no API key: **Deezer** (related artists), **LRCLIB** (lyrics), **Apple iTunes Search** (30-s previews; ~20 calls/min), **ReccoBeats** (audio features; audio analysis of a preview). Each call has a timeout and per-host spacing; failures are skipped.
     *   OS-level APIs (Win32 `SetDeviceGammaRamp` via `ctypes` for Windows, `xrandr` for Linux) for screen temperature.
-*   **Performance:** Spotify polling must happen asynchronously every 30-60 seconds to avoid API rate limits. Environment hot-swaps must execute in < 500ms to prevent UI freezing.
+*   **Performance:** Spotify polling happens asynchronously every 3 s while music plays (`inference.poll_min_s`) and every 15 s when paused or idle (`poll_max_s`), with backoff on rate limits (429). Environment hot-swaps must execute in < 500ms to prevent UI freezing.
 *   **Architecture:** Mood transitions for the audio actuator must be mathematically modeled as a Markov chain through a 2D latent space (valence vs. energy/arousal). Simple genre swapping is forbidden. In Phase 2 the chain chooses the waypoint toward which songs are picked each cycle.
 
 ## Inputs and Outputs
@@ -110,6 +122,8 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   **Frontend (Account):** The sidebar's top-right corner shows the active account's name with a **Log out** link; the tray menu shows "Spotify: <name>" and **Log out**.
 *   **Frontend (Log out):** Log out deletes only the active account's saved token, removes it from the list, and shows the account window again; closing that window quits the app.
 *   **Frontend:** The UI successfully launches as a system tray icon and opens a frameless, frosted-glass sidebar menu when clicked.
+*   **Frontend (Sync):** A song change (natural or skipped) appears in the sidebar within ~3 s: song, artist, progress bar and mood dot together; a new `state.json` is shown without waiting for the UI's timer.
+*   **Frontend (Glass design):** The sidebar follows the reference glass design, fits in 680 px, and its tint follows the current mood (four distinct hues at the four corners of the mood space), gliding between colours.
 *   **Frontend:** Clicking a mood button successfully updates the target coordinates in `config.json` in under 100ms.
 *   **Backend (Inference):** The daemon successfully polls the live Spotify API for the currently playing track and retrieves audio features from the fallback chain without crashing.
 *   **Backend (Actuation):** When the current mood vector deviates by >0.2 from the target coordinates, the audio actuator calculates a bridging track mathematically plotted between the current and target state, and successfully pushes it to the active Spotify queue.
@@ -136,7 +150,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 
 ## Output Files
 *   `frontend/app.py` (Main UI loop, system tray logic, frosted glass setup)
-*   `frontend/components.py` (Toggle buttons, layout styling, account name + Log out in the sidebar corner)
+*   `frontend/components.py` (Glass sidebar widgets: window dots, rows, mood map, progress bar, account row; `mood_color()`)
 *   `backend/daemon.py` (Main background loop and orchestration)
 *   `backend/spotify/client.py` (Live client and mock client)
 *   `backend/spotify/auth.py` (PKCE sign-in, Premium check, `AccountStore` of linked accounts, switching and log out)

@@ -56,8 +56,8 @@
     "ema_alpha": 0.3,
     "skip_weight": 0.3,
     "skip_threshold": 0.8,
-    "poll_min_s": 30,
-    "poll_max_s": 60
+    "poll_min_s": 3,
+    "poll_max_s": 15
   },
   "audio": {
     "enabled": true,

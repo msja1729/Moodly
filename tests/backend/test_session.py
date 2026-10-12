@@ -415,3 +415,16 @@ def test_user_queued_songs_play_in_full_and_music_never_stops(tmp_config, big_ca
     for t in songs[1:]:  # the user's queued songs: each played once, to the end
         assert [sk for pt, sk in played if pt == t] == [False]
     assert len(client.playlists[s.playlist_id]) > 10
+
+
+def test_mood_moves_as_soon_as_the_next_song_starts(big_catalog, clock):
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    s.cycle(FOCUSED)
+    before = s.mood
+    nxt = s._window_points[1][0].rsplit(":", 1)[-1]
+    s.note_started(nxt)  # no cycle: the mood is re-averaged from the window that's left
+    assert s.mood != before
+    pts = [p for _, p in s._window_points[:SelectionParams().window_size] if p]
+    assert s.mood == pytest.approx((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))

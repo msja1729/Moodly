@@ -170,7 +170,7 @@ Then a colored circle icon appears in the system tray, at the bottom-right of th
 
 > Tip: run `.venv\Scripts\pythonw -m frontend.app` instead to start the UI without a console window.
 
-**Your account and Log out.** The sidebar's top-right corner shows the Spotify account in use (green dot + name). Click **Log out** under it, or right-click the tray icon and choose **Log out**, to forget that account on this computer. The account window opens again so you can pick another linked account or connect a new one.
+**Your account and Log out.** The sidebar's bottom row shows the Spotify account in use. Click its round **⇥** button, or right-click the tray icon and choose **Log out**, to forget that account on this computer. The account window opens again so you can pick another linked account or connect a new one.
 
 ### 4.3 Stopping
 
@@ -185,40 +185,38 @@ The two programs are independent: you can stop either one without affecting the 
 
 **Left-click the tray icon** to open the sidebar. Click anywhere else, or click the icon again, to close it.
 
+![The sidebar in three moods](sidebar.png)
+
 ```
-┌──────────────────────────────────┐
-│ Ambient Mood                     │
-│ Pick where you want to end up    │
-│ ┌──────────────┐┌──────────────┐ │
-│ │ ◎ Focused    ││ ≈ Calm       │ │  ← mood tiles (the selected one is colored)
-│ └──────────────┘└──────────────┘ │
-│ ┌──────────────┐┌──────────────┐ │
-│ │ ⚡ Energized ││ ☾ Wind Down  │ │
-│ └──────────────┘└──────────────┘ │
-│ ┌──────────────────────────────┐ │
-│ │ energy          ○ ← you      │ │  ← mood map
-│ │   ↑          ╱               │ │
-│ │          ● ← target          │ │
-│ │          valence →           │ │
-│ └──────────────────────────────┘ │
-│ ┌──────────────────────────────┐ │
-│ │ Daft Punk - One More Time    │ │  ← status card
-│ │ 0.46 from target · ~4 songs  │ │
-│ │ to go · 6100K · queued: …    │ │
-│ └──────────────────────────────┘ │
-│ [Start session]           [Quit] │   (during a session: [End session] [New session] [Quit])
-└──────────────────────────────────┘
+● ● ●                              ← red dot hides the sidebar
+Ambient Mood
+NOW PLAYING
+  Song · artist · ▬▬▬▬───── progress
+  ┌───────────────────────────┐
+  │ mood map: ○ you ┄┄ ● target│
+  └───────────────────────────┘
+  0.21 from target · ~4 songs to go · 14 songs ahead
+MOODS
+  ◎ Focused
+▌ ≈ Calm                     • ›   ← your target (pill); • = closest to how the music feels now
+  ⚡ Energized
+  ☾ Wind Down
+SESSION
+  ▶ Start session      (during a session: ■ End session, ↻ New session)
+(J) Your name  Spotify Premium   ⇥ ⏻   ← Log out, Quit
 ```
 
 | Control | What it does |
 |---|---|
-| **Mood tiles** | Click one to set your target. Within a second, the themes switch, the screen starts moving toward that mood's temperature, and a bridging track is queued if you're far enough from the target. |
-| **Mood map** | The white dot is your current mood. The colored dot is the target. The dashed line is the distance still to go. |
-| **Status card** | Shows the current track, the distance to the target, roughly how many songs it will take to get there, the screen temperature, and the last bridging track queued. |
+| **Glass colour** | Follows how your music feels right now: amber when happy and energetic, rose when tense, violet when sad, teal when calm (blends in between). It glides as your mood moves. |
+| **Now playing** | The song, the artist and a live progress bar. They change the moment the song changes (within ~3 s of a skip). |
+| **Mood map** | The white dot is your current mood. The coloured dot is the target. The dashed line is the distance still to go. |
+| **Status line** | The distance to the target, roughly how many songs it will take, the screen temperature, and the session's songs ahead / last changes (or a note such as "Preparing songs for you…"). |
+| **Mood rows** | Click one to set your target. Within a second, the themes switch and the screen starts moving toward that mood's temperature. |
 | **Start session** | Shown when no session runs (always at launch). Starts a session: themes and screen follow the target, and the app first prepares a pool of songs for you (your taste, your top-2 languages, the target mood). While it prepares, nothing is added to your music; your own queue keeps playing. Once the pool is ready, it starts adding songs. |
 | **End session** | Ends the session: the next 10 songs go back to your normal queue, the session playlist is deleted, the song pool is cleared from disk, and the screen drifts back to neutral. |
 | **New session** | Ends the current session (as above) and starts a new one with a fresh song pool. |
-| **Quit** | Closes the tray UI only. The daemon keeps running. |
+| **⇥ / ⏻** | Log out of Spotify on this computer / Quit the app (ends the session first). |
 
 The **tray icon color** matches your current target mood. Hover over it to see the mood's name.
 

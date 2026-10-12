@@ -195,13 +195,13 @@ class TestSkipDetection:
         assert len(eng.observe(pb(a, 0, 0), feats(0.5, 0.5))) == 1
         assert eng.observe(pb(a, 30, 30), None) == []
 
-    def test_poll_delay_stays_in_range_and_targets_track_end(self, clock):
+    def test_poll_delay_is_short_while_playing_and_hits_the_track_end(self, clock):
         eng = self.engine(clock)
         a = make_track("a", 200)
-        for progress in (0, 100, 150, 170, 190, 199):
-            d = eng.next_delay(pb(a, progress, 0))
-            assert 30 <= d <= 60
-        assert eng.next_delay(None) == 60
+        for progress in (0, 100, 150, 190):
+            assert eng.next_delay(pb(a, progress, 0)) == 3      # a skip shows within 3 s
+        assert eng.next_delay(pb(a, 199, 0)) == pytest.approx(1.4)  # just after the song ends
+        assert eng.next_delay(None) == 15
 
     def test_rate_limit_backs_off(self, clock):
         class Limited:
@@ -327,3 +327,20 @@ class TestDaemonSession:
         assert daemon.target_mood == "wind_down"
         assert daemon.target == (0.4, 0.15)
         assert daemon.display.target == 3500
+
+
+def test_state_written_at_once_when_it_changes_else_every_10s(tmp_config, catalog, clock):
+    daemon = make_daemon(tmp_config, MockSpotifyClient(catalog, clock, seed=4), clock, catalog)
+    path = tmp_config.parent / "state.json"
+    daemon.write_state()
+    first = path.stat().st_mtime_ns
+    path.unlink()
+    daemon.write_state()                  # nothing visible changed, < 10 s: not written
+    assert not path.exists()
+    daemon.target_mood = "calm"           # visible change: written at once
+    daemon.write_state()
+    assert path.exists()
+    path.unlink()
+    clock.advance(11)
+    daemon.write_state()                  # unchanged but 10 s passed: written (keeps "updated" fresh)
+    assert path.exists() and first

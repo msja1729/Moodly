@@ -31,8 +31,8 @@ class InferenceParams:
     ema_alpha: float = 0.3
     skip_weight: float = 0.3
     skip_threshold: float = 0.8
-    poll_min_s: float = 30.0
-    poll_max_s: float = 60.0
+    poll_min_s: float = 3.0     # while music plays: notice a skip or a new song within this
+    poll_max_s: float = 15.0    # paused / nothing playing
     max_backoff_s: float = 600.0
 
     @classmethod
@@ -161,13 +161,13 @@ class InferenceEngine:
         return int(min(played, prev.track.duration_ms))
 
     def next_delay(self, pb: Playback | None) -> float:
+        """Poll every `poll_min_s` while playing (a skip shows within seconds), and right after the
+        song is due to end, so the sidebar switches to the next song on the spot."""
         lo, hi = self.params.poll_min_s, self.params.poll_max_s
         if pb is None or not pb.is_playing:
             return hi
         remaining = (pb.track.duration_ms - pb.progress_ms) / 1000
-        # Aim just after the track ends so the change is seen promptly.
-        base = remaining + 2 if remaining + 2 <= hi else hi
-        return float(min(max(base + self.rng.uniform(-2, 2), lo), hi))
+        return float(max(0.5, min(lo, remaining + 0.4)))
 
     def _backoff(self) -> float:
         return min(self.params.poll_min_s * 2 ** (self.consecutive_errors - 1), self.params.max_backoff_s)

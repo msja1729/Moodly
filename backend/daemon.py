@@ -329,6 +329,13 @@ class Daemon:
             "deviation": round(distance(mood, self.target), 3) if mood else None,
             "expected_steps": steps,
             "track": f"{pb.track.artists} - {pb.track.name}" if pb else None,
+            "track_name": pb.track.name if pb else None,
+            "track_artists": pb.track.artists if pb else None,
+            # The sidebar moves the progress bar itself from these (no need to write every second).
+            "progress_ms": pb.progress_ms if pb else None,
+            "duration_ms": pb.track.duration_ms if pb else None,
+            "is_playing": pb.is_playing if pb else False,
+            "observed_at": pb.observed_at if pb else None,
             "last_bridge": self.last_bridge,
             "kelvin": self.display.current,
             "paused": self.paused,
@@ -350,12 +357,23 @@ class Daemon:
             },
         }
 
-    def write_state(self) -> None:
-        if self.state_path:
-            try:
-                atomic_write_json(self.state_path, self.state())
-            except OSError as e:
-                log.debug("could not write state: %s", e)
+    # Fields that change on every poll without anything the user would see changing.
+    _VOLATILE = ("updated", "progress_ms", "observed_at")
+
+    def write_state(self, force: bool = False) -> None:
+        """Write data/state.json for the sidebar: at once when something visible changed, else every 10 s."""
+        if not self.state_path:
+            return
+        state = self.state()
+        visible = {k: v for k, v in state.items() if k not in self._VOLATILE}
+        now = self.clock.now()
+        if not force and visible == getattr(self, "_last_state", None) and now - getattr(self, "_last_write", -1e18) < 10:
+            return
+        try:
+            atomic_write_json(self.state_path, state)
+            self._last_state, self._last_write = visible, now
+        except OSError as e:
+            log.debug("could not write state: %s", e)
 
     # ------------------------------------------------------------- scheduling
     async def run_for(self, seconds: float | None = None) -> None:
