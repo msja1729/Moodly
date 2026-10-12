@@ -256,6 +256,11 @@ class LiveSpotifyClient:
     def set_shuffle(self, on: bool) -> None:
         self._call(self.sp.shuffle, on)
 
+    def play_uris(self, uris: list[str], position_ms: int = 0) -> None:
+        """Play a plain list of songs (no playlist behind them), the first from `position_ms`."""
+        self._call(self.sp.start_playback, uris=list(uris), offset={"position": 0},
+                   position_ms=max(0, int(position_ms)))
+
     # -- player buttons in the sidebar ------------------------------------------
     def pause(self) -> None:
         self._call(self.sp.pause_playback)
@@ -413,6 +418,7 @@ class MockSpotifyClient:
         self.playlists: dict[str, list[list[str]]] = {}  # id -> [[entry uid, uri], ...]
         self.user_playlists: dict[str, tuple[str, list[str]]] = {}  # song sources: id -> (name, track ids)
         self.unlisted: set[str] = set()  # playlist entries Spotify plays but its API doesn't list (tests)
+        self.played_lists: list[list[str]] = []  # play_uris() calls (track ids)
         self.liked: list[str] = []
         self.deleted_playlists: list[str] = []
         self.context: str | None = None  # playing playlist URI
@@ -531,6 +537,18 @@ class MockSpotifyClient:
         if self._current is not None and self._paused_at is None:
             self._current = _Play(self._current.track, max(0.0, self._progress_s()))
             self._advance()
+
+    def play_uris(self, uris: list[str], position_ms: int = 0) -> None:
+        self._tick()
+        self._advance()
+        ids = [u.rsplit(":", 1)[-1] for u in uris]
+        self.context, self._ctx_uid = None, None
+        self._script = [(t, 1.0) for t in ids[1:]]
+        track = self.catalog[ids[0]][0]
+        self._current = _Play(track, track.duration_ms / 1000)
+        self._started = self.clock.now() - position_ms / 1000
+        self._paused_at, self.stopped = None, False
+        self.played_lists.append(ids)
 
     def user_switch_context(self, track_ids: list[str]) -> None:
         """The user starts other music (e.g. an album) in Spotify."""

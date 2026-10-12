@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import threading
 import time
 from collections import Counter, defaultdict
@@ -160,6 +161,16 @@ class Recommender:
 
     def source_label(self) -> str:
         return source_label(self.source)
+
+    def source_seed(self, k: int = 2) -> list[tuple[str, str, str, int]]:
+        """A few songs of the chosen playlist / Liked Songs, picked at random, to keep the music going while the
+        pool is read (it takes a little while). (uri, name, artists, duration_ms)."""
+        if not self.custom:
+            return []
+        metas = self.spotify.saved_tracks() if self.source["kind"] == "liked" else \
+            self.spotify.playlist_tracks(self.source["id"])
+        picks = random.sample(metas, min(k, len(metas)))
+        return [(t.uri, t.name, t.artists_text, t.duration_ms) for t in picks]
 
     # ------------------------------------------------------------- goal
     def set_goal(self, target, mood) -> None:

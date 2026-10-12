@@ -189,10 +189,12 @@ class TestEnd:
         s.start()
         s.cycle(FOCUSED)
         nxt = upcoming(client)[:5]
+        playing, queued_before = client.player_state().item.id, list(client.queued_log)
         s.end()
-        assert not s.active and s.status == session_mod.IDLE
-        assert client.deleted_playlists == [client.context.rsplit(":", 1)[-1]] or client.deleted_playlists
-        assert client.queued_log[-5:] == nxt  # the music goes on with the same songs
+        assert not s.active and s.status == session_mod.IDLE and client.deleted_playlists
+        # Off the session playlist: the same song goes on, then the next 5 as a plain list; nothing queued.
+        assert client.context is None and client.played_lists[-1] == [playing] + nxt
+        assert client.player_state().item.id == playing and client.queued_log == queued_before
         assert not (tmp_path / "session.json").exists()
         clock.advance(3600)
         assert client.player_state() is not None  # still playing after the playlist is gone
@@ -608,3 +610,28 @@ def test_a_slow_session_step_never_holds_up_the_sidebar(tmp_config, big_catalog,
 
     asyncio.run(run())
     d.shutdown()
+
+
+
+def test_playlist_session_starts_fresh_without_the_users_queue(tmp_config, big_catalog, clock):
+    from shared.config_io import set_song_source
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    d, s = TestDaemonSessionMode().make_daemon(tmp_config, client, big_catalog, clock)
+    liked = [t for t in big_catalog if t not in songs][:30]
+
+    class Rec:  # just enough of the recommender: a Liked Songs source
+        custom, source, params = True, {"kind": "liked"}, None
+
+        def source_seed(self, k):
+            return [(f"spotify:track:{t}", big_catalog[t][0].name, big_catalog[t][0].artists,
+                     big_catalog[t][0].duration_ms) for t in liked[:k]]
+
+    d.recommender = Rec()
+
+    async def run():
+        await d._prepare_start(s)
+        assert s.start()
+        entries = [it.id for it in client.playlist_items(s.playlist_id)]
+        assert entries == [songs[0]] + liked[:2]  # the song playing + 2 from Liked Songs; not the user's queue
+
+    asyncio.run(run())

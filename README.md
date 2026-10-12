@@ -49,7 +49,7 @@ backend/             the daemon (headless)
     client.py        live Spotify client and the scripted mock
     auth.py          PKCE sign-in, Premium check, linked accounts, log out
   actuators/
-    session.py       the session playlist: hand-over, add/remove cycles, hand back + delete
+    session.py       the session playlist: hand-over, add/remove cycles, move off + delete
     audio.py         Phase 1 mode: bridging tracks appended to the queue
     workspace.py     VS Code / Windows Terminal themes
     display.py       screen color temperature

@@ -144,6 +144,10 @@ class PlaylistSession:
         # `source_dry` says the playlist has nothing closer to the target than the mood already is.
         self.allow_repeats = False
         self.source_dry = False
+        # Set by the daemon before start(): with a playlist / Liked Songs source the session starts fresh
+        # (the song playing + `seed_items` from the source), without moving Spotify's queue in.
+        self.move_queue_in = True
+        self.seed_items: list[Item] = []
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
@@ -259,10 +263,10 @@ class PlaylistSession:
             if ps is None or ps.item is None or not ps.is_playing:
                 self.status = WAITING
                 return False
-            upcoming = self.client.queue()
+            upcoming = self.client.queue() if self.move_queue_in else []
             items: list[Item] = []
             seen: set[str] = set()
-            for it in [ps.item] + upcoming:
+            for it in [ps.item] + upcoming + list(self.seed_items):
                 if it.key not in seen:
                     seen.add(it.key)
                     items.append(it)
@@ -298,7 +302,7 @@ class PlaylistSession:
         self._snapshot, self._snap_index = [it.key for it in items], 0
         # A new session starts fresh: nothing from the last one counts as played, added or removed.
         self.played_ids, self.played_keys = {ps.item.id}, {ps.item.key}
-        self.added_keys, self.removed_ids, self.pending = set(), set(), {}
+        self.added_keys, self.removed_ids, self.pending = {it.key for it in self.seed_items}, set(), {}
         self._window_points, self.source_dry = [], False
         self.last_added, self.last_removed = [], []
         self.status = MANAGING
@@ -620,13 +624,21 @@ class PlaylistSession:
         if handback:
             try:
                 ps = self.client.player_state()
-                if ps is not None and ps.context_uri == self.playlist_uri:
+                if ps is not None and ps.item is not None and ps.context_uri == self.playlist_uri:
                     entries = self.client.playlist_items(self.playlist_id)
-                    cur, _ = self._locate(entries, ps.item.uri if ps.item else "")
-                    for it in entries[cur + 1: cur + 1 + self.params.handback_count]:
-                        self.client.add_to_queue(it.uri)
+                    self._now_key = ps.item.key
+                    cur, _ = self._locate(entries, ps.item.uri)
+                    nxt = [it.uri for it in entries[cur + 1: cur + 1 + self.params.handback_count]
+                           if it.kind == "track" and it.key != ps.item.key]
+                    progress = ps.progress_ms + int((self.clock.now() - ps.observed_at) * 1000)
+                    # Leave the playlist: the same song goes on at the same moment, then the next songs as a
+                    # plain list. Spotify then no longer shows "Next from: Ambient Mood session", and nothing
+                    # is added to the user's own queue (where it would pile up from session to session).
+                    self.client.play_uris([ps.item.uri] + nxt, progress)
+                    if not ps.is_playing:
+                        self.client.pause()
             except Exception as e:
-                log.warning("could not hand the upcoming songs back to your queue: %s", e)
+                log.warning("could not move off the session playlist: %s", e)
         self._delete_playlist()
         self.status = IDLE
         if self.trace is not None:

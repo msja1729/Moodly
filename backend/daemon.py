@@ -56,7 +56,7 @@ from backend.feedback import FeedbackLog
 from backend.inference import InferenceEngine, InferenceParams, PollResult, TrackChanged, TrackStarted
 from backend.mood_space import MarkovParams, Point, distance
 from backend.selection import SelectionParams
-from backend.spotify.client import RateLimited
+from backend.spotify.client import Item, RateLimited
 from recommender import Recommender, RecommenderParams
 from shared.config_io import (DEFAULT_CONFIG_PATH, PROJECT_ROOT, atomic_write_json, ensure_app_home,
                               load_config, resolve_path, target_point)
@@ -214,6 +214,21 @@ class Daemon:
             else:
                 await self._audio_step("track_change")
 
+    async def _prepare_start(self, s) -> None:
+        """A playlist / Liked Songs session starts fresh: only the song playing and a couple of songs from the
+        source, nothing from Spotify's queue. "For you" keeps the user's queue, as before."""
+        rec = self.recommender
+        if rec is None or not rec.custom:
+            s.move_queue_in, s.seed_items = True, []
+            return
+        s.move_queue_in = False
+        try:
+            seed = await asyncio.to_thread(rec.source_seed, 2)
+        except Exception as e:
+            log.debug("could not read songs from %s: %s", rec.source_label(), e)
+            seed = []
+        s.seed_items = [Item(uri, name, artists, duration) for uri, name, artists, duration in seed]
+
     def _spawn(self, coro) -> None:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
@@ -247,6 +262,7 @@ class Daemon:
                 # After the user took over (or a non-Premium answer), only a new target restarts it.
                 if s.status in (session_mod.USER_TOOK_OVER, session_mod.NOT_PREMIUM) and reason != "target_change":
                     return
+                await self._prepare_start(s)
                 if not await asyncio.to_thread(s.start):
                     if s.status == session_mod.NOT_PREMIUM and self.on_not_premium is not None:
                         self.on_not_premium()
@@ -319,6 +335,10 @@ class Daemon:
         self._prepare_started = self.clock.now()
         self.recommender.set_goal(self.target, self.session.mood)
         kept = self.recommender.prune()  # songs that would lead away from the new target leave the pool
+        if self.recommender.custom:
+            # Only the chosen playlist, even while it is read: never a catalog song to fill a gap.
+            self.session.use_tables(self.recommender.table(), None, None)
+            self.session.allow_repeats = True
         self._rec_ready = True
         self._start_rec_refresh()
         log.info("preparing songs for %s (%d useful songs in the pool already)", self.target_mood, kept)

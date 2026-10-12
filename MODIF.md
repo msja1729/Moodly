@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M28 · No more lag; a popup asks where songs come from at Start / New session (at the end, after the summary).
+**Latest:** M29 · Only songs from the chosen source; End session really leaves the playlist (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M27)
+## Summary of earlier modifications (M1–M28)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -37,42 +37,39 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M25 | 10-12 | **Songs from one of your playlists or Liked Songs** | Users wanted songs from a playlist of theirs, not only the general search. | A "Songs:" picker (For you / Liked Songs / own playlists); a playlist pool has no language filter, no top-up, repeats allowed, ready once read; "no songs closer" note. 242 tests. |
 | M26 | 10-12 | **Good songs no longer removed; the mood is what you listen to** | Mass removals (relinked ids made the playlist look like the user's own queue, so every song was a "duplicate"); far-from-target-only removals after a new target; the mood counted Moodly's unplayed picks. | Songs matched by title + artists; misread-queue guard; one removal rule (far from both); mood = the song playing + the user's own songs; the planner steps from where the queue is heading. 248 tests. |
 | M27 | 10-12 | **Songs no longer cut a second after they start; each session starts fresh** | After adding songs, the reload "at position N" started the next song (Spotify counts an entry its API doesn't list); a new session remembered the last one's played/added songs. | Reload at the song itself (`offset.uri`), looked up again after the edits; per-session reset. 250 tests. |
+| M28 | 10-12 | **No more lag; popup for where songs come from** | The sidebar/dashboard showed changes late: the backend ran the whole session step before writing the new song, and didn't poll meanwhile. | New song written at once; session steps in the background; refresh only on real state changes; dashboard ETag; Pause/Play retry; Start/New session popup over the blurred sidebar. 252 tests. |
 
 ---
 
-## M28 · No more lag; a popup asks where songs come from at Start / New session · 2026-10-12 · `🆕 LATEST`
+## M29 · Only songs from the chosen source; End session really leaves the playlist · 2026-10-12 · `🆕 LATEST`
 
-**Problems (live test 15:26–15:33, Liked Songs):**
-1. **The sidebar and the dashboard lagged behind Spotify.** Measured, the sidebar itself is fast (a refresh takes 0.7 ms, a full repaint 3.3 ms). The delay was in the backend:
-   - On a new song, it ran the whole session step (read the playlist and queue, choose songs, add them, reload Spotify; 2 s or more, longer when Spotify was slow, e.g. a 5 s timeout at 15:30:12) before writing the new song to `state.json`.
-   - It didn't poll Spotify meanwhile.
-2. **"It doesn't add songs from Liked Songs."** It did: every song added from 15:28 on is in Liked Songs (checked against the account). 8 of the 11 songs in the screenshot are Liked Songs. The other two (*Ishq Jalakar*, *Samjhawan*) were already in the user's Spotify queue at Start session and were moved into the session playlist as the user's own songs. So no fix was needed for this.
-3. **Pause/Play sometimes failed** with Spotify's 404 "no active device", right after a playlist reload.
-4. **Wanted:** at Start session or New session, a popup asking where songs should come from (For you or a playlist), in the same design with the background blurred. Picking an option starts the session at once.
+**Problems:**
+1. **Songs from outside the chosen source.** With Liked Songs picked, the session playlist held songs like *Mehabooba*, *Tu Aake Dekhle* and *Jo Tum Mere Ho*. Causes:
+   - At Start session the user's Spotify queue was moved in.
+   - Each End session added the next 10 songs to that queue (`add_to_queue`), so old sessions' songs piled up there and came back at every start.
+   - While a playlist pool was being read, gaps could be filled from the catalog.
+2. **"Next from: Ambient Mood session" after End session.** The playlist was deleted (unfollowed), but Spotify went on playing its own copy of it.
+
+**Wanted:** a session started with a chosen source starts fresh and adds only from it. "For you" stays as it is.
 
 **Modifications:**
-1. **Backend never holds up the sidebar** (`backend/daemon.py`):
-   - A new song is written to `state.json` at once.
-   - Live, session steps (song change, timer, ready) run as background tasks (`background_steps`, `_spawn`), so Spotify keeps being polled. The session lock still keeps steps one at a time.
-   - Each step writes the state when it finishes. Tests run steps inline.
-2. **Pause/Play:** one retry after 0.7 s on a 404.
-3. **Sidebar refresh:** only when `state.json` really changed (its time and size). The data folder's logs and databases no longer trigger refreshes.
-4. **Dashboard:** the trace is parsed once per change and served with an `ETag`. Unchanged polls get a 304 and the page keeps what it has.
-5. **Start / New session popup** (`SourcePicker` in `frontend/components.py`, wired in `frontend/app.py`):
-   - "Where should songs come from?": For you · new picks, Liked Songs (count), then your playlists (count; empty ones dimmed). The current choice is marked.
-   - A glass card in the mood colour over a blurred snapshot of the sidebar, with a dark veil that fades in (180 ms).
-   - Picking saves the source and closes the popup immediately, then starts (`set_paused(False)`) or restarts (`start_new_session`) the session.
-   - Esc, Cancel, a click outside, or closing the sidebar cancels and starts nothing.
-   - The "Songs:" row stays, for changing the source during a session.
-   - `SidebarPanel.source_options()` and `is_current()` are shared by the row's menu and the popup.
-   - Disabled rows are drawn at 40% opacity.
-6. **Docs:** SPEC (popup, sync), MANUAL (Start session).
+1. **End session moves off the playlist** (`PlaylistSession.end`, new `play_uris()` on both clients):
+   - Spotify plays the same song at the same moment, then the next 10 songs as a plain list (no context).
+   - "Next from: Ambient Mood session" disappears, and nothing is added to the user's queue.
+   - If Spotify was paused, it is paused again. Then the playlist is deleted, as before.
+2. **Fresh start with a playlist / Liked Songs** (`Daemon._prepare_start`, `Recommender.source_seed`):
+   - The session playlist starts with only the song playing plus 2 random songs from the source, to keep the music going while the pool is read.
+   - Spotify's queue is not moved in (`move_queue_in = False`), and the seed songs count as Moodly's picks for the mood.
+   - "For you" moves the user's queue in, as before.
+3. **No catalog fill-ins for a playlist source:** `_begin_preparing` gives the session the source's pool (no language filter, no fallback, repeats allowed) at once, before the first step.
+4. Docs: SPEC (fresh start, end), MANUAL (`handback_count`), README, the End session tooltip.
 
-**Checked on screen:** the popup over the blurred sidebar, with Liked Songs marked and the empty playlist dimmed.
-
-**Tests:** 252 pass.
+**Tests:** 253 pass.
 - New:
-  - a slow session step doesn't stop polling, and the playing song is shown
-  - the popup can be cancelled (Esc, closing the sidebar)
+  - a Liked Songs session starts with the song playing and 2 Liked Songs, not the user's queue
 - Updated:
-  - the session buttons go through the popup: Liked Songs → start; New session → For you
+  - End session leaves the playlist: the same song keeps playing, then the next 5, with nothing queued
+
+**Limits:**
+- Songs the user added to Spotify's own queue ("Add to queue") still play first. Spotify gives apps no way to clear that queue.
+- Songs handed back to the queue by earlier versions are still there. Spotify's "Clear queue" removes them, once.

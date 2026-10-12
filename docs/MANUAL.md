@@ -292,7 +292,7 @@ Edit `config/config.json` in any text editor. Changes to the **target mood** or 
 | `session.search_radius` | `0.08` | How close to the next step a new song must be (widened automatically if needed) |
 | `session.w_tempo`, `w_key`, `w_loudness`, `w_feel` | `0.15`, `0.05`, `0.05`, `0.05` | How much musical fit matters versus mood fit |
 | `session.allow_explicit` | `true` | Set to `false` to never add explicit songs |
-| `session.handback_count` | `10` | Songs moved back to your queue when a session ends |
+| `session.handback_count` | `10` | Songs that keep playing after a session ends (the current song goes on, then these, without the session playlist) |
 | `audio.deviation_threshold` | `0.2` | Queue mode: how far from the target before bridging starts |
 | `audio.cooldown_s` | `90` | Minimum seconds between bridging tracks |
 | `audio.enabled` | `true` | Set to `false` to turn off queueing completely |
