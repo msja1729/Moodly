@@ -86,6 +86,12 @@ class SpotifySource:
     def track(self, track_id: str) -> TrackMeta | None:
         return track_from_spotify(self.client.track_raw(track_id))
 
+    def playlist_tracks(self, playlist_id: str) -> list[TrackMeta]:
+        return [t for t in map(track_from_spotify, self.client.playlist_tracks_raw(playlist_id)) if t]
+
+    def saved_tracks(self) -> list[TrackMeta]:
+        return [t for t in map(track_from_spotify, self.client.saved_tracks_raw()) if t]
+
     def search(self, query: str, pages: int = 1) -> list[TrackMeta]:
         out: list[TrackMeta] = []
         for page in range(pages):

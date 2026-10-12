@@ -127,11 +127,6 @@ class FakeRecommender:
         self.goals = []
         self.target = self.mood = None
 
-    def refresh(self):
-        self.refreshes += 1
-        self.pool = TrackTable([t for t in self.full.tracks if self.is_useful(t.point)])
-        return self.pool
-
     def table(self):
         return self.pool
 
@@ -159,6 +154,33 @@ class FakeRecommender:
 
     def want_features(self, ids):
         pass
+
+    # Song source: a "playlist" is the first `playlist_size` songs of the catalog, kept whole.
+    source = {"kind": "general"}
+    loaded = False
+    playlist_size = 6
+
+    @property
+    def custom(self):
+        return self.source["kind"] != "general"
+
+    def set_source(self, source):
+        from recommender.engine import normalize_source
+        new = normalize_source(source)
+        changed, self.source, self.loaded = new != self.source, new, False if new != self.source else self.loaded
+        return changed
+
+    def source_label(self):
+        from recommender.engine import source_label
+        return source_label(self.source)
+
+    def refresh(self):
+        self.refreshes += 1
+        if self.custom:
+            self.pool, self.loaded = TrackTable(self.full.tracks[:self.playlist_size]), True
+            return self.pool
+        self.pool = TrackTable([t for t in self.full.tracks if self.is_useful(t.point)])
+        return self.pool
 
 
 def make_daemon(tmp_config, catalog, clock):
@@ -240,4 +262,52 @@ def test_preparing_ends_after_the_time_limit(tmp_config, catalog, clock):
         assert not s.preparing
 
     asyncio.run(run())
+    daemon.shutdown()
+
+
+def test_songs_from_a_playlist_only(tmp_config, catalog, clock):
+    from shared.config_io import set_song_source
+    daemon, s, rec, client = make_daemon(tmp_config, catalog, clock)
+    playlist_ids = {t.id for t in rec.full.tracks[:rec.playlist_size]}
+
+    async def run():
+        await daemon.apply_target("startup")
+        set_paused(False, tmp_config)
+        await daemon.reload_config()
+        await settle(daemon)
+        assert not s.allow_repeats and s.languages  # "For you": languages and the catalog top-up apply
+
+        cleared = rec.cleared
+        set_song_source({"kind": "playlist", "id": "pl1", "name": "Melody"}, tmp_config)
+        await daemon.reload_config()
+        assert rec.cleared == cleared + 1 and s.preparing  # the old pool is dropped, the new one prepared
+        await settle(daemon)
+        assert not s.preparing  # a playlist is ready once read, even with fewer than ready_songs songs
+        assert s.table is rec.pool and {t.id for t in s.table.tracks} == playlist_ids
+        assert s.languages is None and s.fallback_table is None and s.allow_repeats
+        state = daemon.state()
+        assert state["song_source"] == {"kind": "playlist", "id": "pl1", "name": "Melody", "label": "Melody"}
+        for _ in range(6):  # several cycles: everything added comes from the playlist
+            clock.advance(60)
+            await daemon._session_step("timer")
+            assert all(name in {f"{t.artists} - {t.name}" for t in rec.pool.tracks} for name in s.last_added)
+
+        set_song_source({"kind": "general"}, tmp_config)
+        await daemon.reload_config()
+        await settle(daemon)
+        assert not s.allow_repeats and s.languages
+
+    asyncio.run(run())
+    daemon.shutdown()
+
+
+def test_the_picker_lists_own_playlists(tmp_config, catalog, clock):
+    daemon, s, rec, client = make_daemon(tmp_config, catalog, clock)
+    ids = list(catalog)[:3]
+    client.user_playlists = {"pl1": ("Melody", ids), "s1": ("Ambient Mood session", ids)}
+    client.liked = ids[:2]
+    asyncio.run(daemon._refresh_playlists())
+    state = daemon.state()
+    assert state["playlists"] == [{"id": "pl1", "name": "Melody", "count": 3}]  # never the session playlist
+    assert state["liked_count"] == 2
     daemon.shutdown()

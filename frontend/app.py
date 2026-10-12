@@ -35,8 +35,8 @@ from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBox
 
 from frontend.components import DEFAULT_TINT, SidebarPanel, blend
 from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, atomic_write_json,
-                              ensure_app_home, load_config, resolve_path, set_paused, set_target_mood,
-                              start_new_session)
+                              ensure_app_home, load_config, resolve_path, set_paused, set_song_source,
+                              set_target_mood, start_new_session)
 
 log = logging.getLogger("ui")
 
@@ -301,6 +301,7 @@ class MoodTrayApp:
         self.panel.quitRequested.connect(QApplication.quit)
         self.panel.logoutRequested.connect(self.log_out)
         self.panel.playerCommand.connect(self.player_command)
+        self.panel.songSourceSelected.connect(self.select_source)
         self.panel.set_account(account)
 
         self.tray = QSystemTrayIcon()
@@ -356,6 +357,12 @@ class MoodTrayApp:
         log.info("target mood -> %s (%.1f ms)", key, elapsed)
         self.refresh(reload=False)
         return elapsed
+
+    def select_source(self, source: dict) -> None:
+        """Where songs come from; the daemon rebuilds the song pool when it sees the change."""
+        self.cfg = set_song_source(source, self.config_path)
+        log.info("songs from -> %s", source.get("name") or source.get("kind"))
+        self.refresh(reload=False)
 
     def player_command(self, cmd: str) -> None:
         """Play/pause/next: the daemon (watching data/player.cmd) tells Spotify and updates the state."""
@@ -449,6 +456,7 @@ class MoodTrayApp:
         mood = self.cfg["moods"][key]
         self.panel.set_selected(key)
         self.panel.set_session(not self.cfg.get("paused"))
+        self.panel.set_source(self.cfg.get("song_source"))
         self.panel.show_state(self.read_state(), key)
         self.tray.setIcon(mood_icon(mood.get("color", "#5B8DEF")))
         who = f" ({self.account.display_name})" if self.account else ""

@@ -64,6 +64,7 @@ from shared.config_io import (DEFAULT_CONFIG_PATH, PROJECT_ROOT, atomic_write_js
 log = logging.getLogger("daemon")
 
 PLAYER_COMMAND = "player.cmd"  # {"cmd": "play" | "pause" | "next"}, written by the sidebar
+PLAYLISTS_EVERY_S = 600.0      # re-read the user's playlists (for the "Songs from" picker)
 
 
 class Daemon:
@@ -112,6 +113,12 @@ class Daemon:
         self._session_seq = int(cfg.get("session_seq", 0))
         if recommender is not None and session is not None:
             session.on_missing_features = recommender.want_features
+        if recommender is not None:
+            recommender.set_source(cfg.get("song_source"))
+        self.playlists: list[dict[str, Any]] = []  # the user's own playlists, for the sidebar's picker
+        self.liked_count: int | None = None
+        self._next_playlists = self.clock.now()
+        self._playlists_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------- target mood
     async def apply_target(self, reason: str) -> None:
@@ -155,6 +162,7 @@ class Daemon:
             return
         old = (self.target_mood, self.paused)
         old_seq = self._session_seq
+        source_changed = self.recommender is not None and self.recommender.set_source(cfg.get("song_source"))
         self.cfg = cfg
         self.target_mood, self.target = cfg["target_mood"], target_point(cfg)
         self.paused = bool(cfg.get("paused", False))
@@ -166,6 +174,12 @@ class Daemon:
             self.write_state()
         elif (self.target_mood, self.paused) != old:
             await self.apply_target("config_change")
+            self.write_state()
+        elif source_changed:
+            log.info("songs now come from: %s", self.recommender.source_label())
+            if not self.paused:
+                await self._clear_pool()  # the old pool's songs aren't from the new source
+                self._begin_preparing()
             self.write_state()
 
     # ------------------------------------------------------------- playback
@@ -252,6 +266,7 @@ class Daemon:
         if self.session is not None:
             self.session.preparing = False
             self.session.needs_more_songs = False
+            self.session.allow_repeats = self.session.source_dry = False
             self.session.use_tables(self._catalog_table)
         log.info("song pool cleared")
 
@@ -259,6 +274,21 @@ class Daemon:
         inj = await self.audio.maybe_inject(self.inference.mood, self.target, reason)
         if inj:
             self.last_bridge = f"{inj.candidate.artists} - {inj.candidate.name}"
+
+    async def _refresh_playlists(self) -> None:
+        """The user's own playlists and Liked Songs count, for the sidebar's "Songs from" picker."""
+        try:
+            rows = await asyncio.to_thread(self.client.my_playlists_raw)
+            liked = await asyncio.to_thread(self.client.saved_tracks_count)
+        except Exception as e:
+            log.debug("could not list your playlists: %s", e)
+            return
+        playlists = [{"id": p["id"], "name": p.get("name") or "Untitled",
+                      "count": int(((p.get("items") or p.get("tracks") or {}).get("total")) or 0)}
+                     for p in rows if p.get("id") and p.get("name") != session_mod.SESSION_NAME]
+        if (playlists, liked) != (self.playlists, self.liked_count):
+            self.playlists, self.liked_count = playlists, liked
+            self.write_state()
 
     # ------------------------------------------------------------- recommender
     def _begin_preparing(self) -> None:
@@ -281,7 +311,8 @@ class Daemon:
             return
         useful = rec.useful_count(s.mood, self.target)
         waited = self.clock.now() - (self._prepare_started if self._prepare_started is not None else self.clock.now())
-        if useful >= rec.params.ready_songs or waited >= rec.params.prepare_max_s:
+        # A playlist / Liked Songs source is ready once it has been read: it won't grow by waiting.
+        if useful >= rec.params.ready_songs or waited >= rec.params.prepare_max_s or (rec.custom and rec.loaded):
             s.preparing = False
             log.info("%d useful songs ready after %.0fs; the session starts adding songs", useful, waited)
             await self._session_step("ready")
@@ -313,6 +344,13 @@ class Daemon:
             return
         self._rec_ready = False
         pool = self.recommender.table()
+        if self.recommender.custom:
+            # Only the chosen playlist: any language, no top-up from elsewhere, repeats allowed.
+            self.session.use_tables(pool, None, None)
+            self.session.allow_repeats = True
+            log.info("song pool: %d songs from %s", len(pool), self.recommender.source_label())
+            return
+        self.session.allow_repeats = self.session.source_dry = False
         self.session.use_tables(pool, self.recommender.languages, self._catalog_table)
         log.info("song pool: %d songs matching your taste (%s)", len(pool),
                  ", ".join(self.recommender.language_names()) or "languages not known yet")
@@ -350,7 +388,12 @@ class Daemon:
                 "queue_size": self.session.queue_size,
                 "last_added": self.session.last_added,
                 "last_removed": self.session.last_removed,
+                "source_dry": self.session.source_dry,
             },
+            "song_source": None if self.recommender is None else {
+                **self.recommender.source, "label": self.recommender.source_label()},
+            "playlists": self.playlists,
+            "liked_count": self.liked_count,
             "recommender": None if self.recommender is None else {
                 "status": self.recommender.status,
                 "languages": self.recommender.language_names(),
@@ -398,6 +441,10 @@ class Daemon:
                             s.needs_more_songs = False
                 self._apply_rec()
                 await self._check_ready()
+            if self.recommender is not None and now >= self._next_playlists and (
+                    self._playlists_task is None or self._playlists_task.done()):
+                self._next_playlists = now + PLAYLISTS_EVERY_S
+                self._playlists_task = asyncio.ensure_future(self._refresh_playlists())
             if now >= next_poll:
                 result = await self.inference.poll()
                 await self.handle_poll(result)

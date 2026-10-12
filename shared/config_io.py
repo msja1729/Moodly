@@ -146,6 +146,14 @@ def set_target_mood(mood: str, path: Path | str = DEFAULT_CONFIG_PATH) -> dict[s
     return cfg
 
 
+def set_song_source(source: dict[str, Any], path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Where songs come from: {"kind": "general"}, {"kind": "liked"} or {"kind": "playlist", "id", "name"}."""
+    cfg = load_config(path)
+    cfg["song_source"] = dict(source)
+    atomic_write_json(path, cfg)
+    return cfg
+
+
 def set_paused(paused: bool, path: Path | str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     cfg = load_config(path)
     cfg["paused"] = bool(paused)

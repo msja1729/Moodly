@@ -197,3 +197,31 @@ def test_pool_keeps_only_songs_useful_for_the_goal_and_clears():
     rec.clear()
     assert len(rec.table()) == 0 and rec.profile is None and rec.store.tracks() == {}
     assert rec.store.get("profile") is None
+
+
+def test_playlist_source_pool_is_the_whole_playlist():
+    playlist = [T(1, "calm", ["A"], lang="fr"), T(2, "loud", ["B"]), T(3, "calm", ["A"]), T(4, "no data", ["C"])]
+    points = {"t1": (0.55, 0.25), "t2": (0.9, 0.95), "t3": (0.55, 0.25)}
+
+    class PlaylistSpotify(FakeSpotify):
+        def playlist_tracks(self, pid):
+            assert pid == "pl1"
+            return playlist
+
+        def saved_tracks(self):
+            return playlist[1:2]
+
+    rec = Recommender(PlaylistSpotify([]), FeatureChain([PointFeatures(points)]), Store(":memory:"),
+                      RecommenderParams(), None, FakeDeezer({}), FakeLyrics({}), now=lambda: NOW)
+    assert not rec.custom and rec.source_label() == "For you"
+    assert rec.set_source({"kind": "playlist", "id": "pl1", "name": "Melody"}) and rec.custom
+    assert not rec.set_source({"kind": "playlist", "id": "pl1", "name": "Melody"})  # unchanged
+    rec.set_goal(target=(0.6, 0.25), mood=(0.7, 0.7))
+    names = sorted(t.name for t in rec.refresh().tracks)
+    # Any language, even songs that lead away from the target; one copy each; songs without data wait.
+    assert names == ["calm", "loud"] and rec.loaded and rec.source_label() == "Melody"
+    assert rec.prune() == 2  # a playlist pool is kept whole on a target change
+    rec.set_source({"kind": "liked"})
+    assert not rec.loaded and [t.name for t in rec.refresh().tracks] == ["loud"]
+    assert rec.source_label() == "Liked Songs"
+    assert rec.set_source({"kind": "playlist"}) and rec.source == {"kind": "general"}  # no id: back to For you

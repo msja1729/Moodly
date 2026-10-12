@@ -137,6 +137,10 @@ class PlaylistSession:
         self.preparing = False         # pool being filled: measure only, don't add or remove
         self._window_points: list[tuple[str, Point | None]] = []  # last window seen: (uri, point)
         self.needs_more_songs = False  # the pool had nothing near the last mood step
+        # The pool is the user's own playlist / Liked Songs (no fallback): songs may repeat, and
+        # `source_dry` says the playlist has nothing closer to the target than the mood already is.
+        self.allow_repeats = False
+        self.source_dry = False
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
@@ -406,6 +410,8 @@ class PlaylistSession:
                 self.needs_more_songs = True
         self.mood, self.deviation = plan.mood, plan.deviation
         self._window_points = [(it.uri, it.point) for it in window]
+        if self.allow_repeats and not self.preparing:
+            self.source_dry = plan.waypoint is not None and not plan.insertions
         self._target = target
         self._window_names = {it.uri: f"{it.artists} - {it.name}" for it in window}
 
@@ -525,6 +531,11 @@ class PlaylistSession:
             idx, _ = rank_candidates(self.fallback_table, target, target, target, context, taken, relaxed,
                                      settled=True)
             picks += [self.fallback_table.tracks[i] for i in idx[:k - len(picks)]]
+        if len(picks) < k and self.allow_repeats:
+            # A playlist source ran out of unplayed songs: play its songs again (not the ones queued now).
+            taken = {t.id for _, t in already} | {w.track_id for w in window if w.track_id} | {t.id for t in picks}
+            idx, _ = rank_candidates(self.table, target, target, target, context, taken, relaxed, settled=True)
+            picks += [self.table.tracks[i] for i in idx[:k - len(picks)]]
         return [(None, t) for t in picks]
 
     # ------------------------------------------------------------- song events (from polling)

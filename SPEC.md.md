@@ -58,6 +58,10 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   **Music never stops:** the session always keeps enough upcoming songs; the app never pauses playback. If the user pauses in Spotify, the app stays idle; if the user starts something else, the app stops managing and shows this in the sidebar.
 
 ## Song Recommendation (Phase 3)
+*   **Song source** (`config.song_source`, chosen in the sidebar's "Songs:" row):
+    *   **For you** (`{"kind": "general"}`, the default): everything below (taste, mood, top-2 languages, live search).
+    *   **Liked Songs** (`{"kind": "liked"}`) or **one of the user's own playlists** (`{"kind": "playlist", "id", "name"}`): the pool is every song of it that has mood features. There is no language or taste filter (the user chose these songs), no top-up from the catalog, and songs may repeat when it runs low. The session is ready as soon as the source has been read. If nothing in it is closer to the target than the mood, the sidebar says *"<playlist> has no songs closer to the target"*.
+    *   Only the user's own (or collaborative) playlists are offered: Spotify answers 403 for the songs of playlists they only follow. The list is read every 10 min (`state.playlists`, `liked_count`). Changing the source during a session clears the pool and prepares the new one.
 *   **Goal:** every song the app adds matches the user's **mood step** (the Phase 2 waypoint, closer to the target), their **taste**, and one of their **top-2 languages** from recent listening. New releases are included.
 *   **No downloaded database:** songs come from live API lookups. Everything looked up is cached in `data/recommender.db` (songs, languages, artists) and in the feature cache, so nothing is looked up twice and the pool survives restarts. The static catalog stays only as a fallback.
 *   **Taste profile** (every 6 h): Spotify top tracks of the last ~4 weeks (weight 1.0→0.5 by rank) and ~6 months (0.5→0.25), plus songs played in Moodly in the last 14 days (+0.6 finished, −0.4 skipped). It gives the favourite artists (scaled 0..1) and the language shares.
@@ -128,6 +132,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   **Frontend (Account):** The sidebar's top-right corner shows the active account's name with a **Log out** link; the tray menu shows "Spotify: <name>" and **Log out**.
 *   **Frontend (Log out):** Log out deletes only the active account's saved token, removes it from the list, and shows the account window again; closing that window quits the app.
 *   **Frontend:** The UI successfully launches as a system tray icon and opens a frameless, frosted-glass sidebar menu when clicked.
+*   **Frontend (Song source):** The "Songs:" row opens a picker with For you, Liked Songs (with its count) and the user's own playlists (with counts; empty ones disabled). The choice is saved in `config.json` and shown on the row; the daemon rebuilds the pool from it.
 *   **Frontend (Player):** Play/Pause and Next in the sidebar control Spotify. The button and progress bar react at once; the daemon (watching `data/player.cmd`) tells Spotify and shows the result within about half a second. The album cover of the song playing is shown.
 *   **Frontend (Sync):** A song change (natural or skipped) appears in the sidebar within 1 s: song, artist, progress bar and mood dot together; a new `state.json` is shown without waiting for the UI's timer.
 *   **Frontend (Pointer effects):** Moving the pointer over the sidebar leaves soft waves in the glass behind the text, which fade within 1.6 s; text stays readable. Rows fade their hover pill in and out and ripple on click; the selection slides between moods. No effect runs while the sidebar is closed.

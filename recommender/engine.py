@@ -76,6 +76,22 @@ class RecommenderParams:
         return cls(languages=[] if langs in ("auto", None, "") else list(langs), **out)
 
 
+def normalize_source(source: Mapping | None) -> dict:
+    """A valid song source: {"kind": "general"}, {"kind": "liked"} or {"kind": "playlist", "id", "name"}."""
+    source = dict(source or {})
+    kind = source.get("kind")
+    if kind == "liked":
+        return {"kind": "liked"}
+    if kind == "playlist" and source.get("id"):
+        return {"kind": "playlist", "id": str(source["id"]), "name": str(source.get("name") or "your playlist")}
+    return {"kind": "general"}
+
+
+def source_label(source: Mapping | None) -> str:
+    source = normalize_source(source)
+    return {"general": "For you", "liked": "Liked Songs"}.get(source["kind"]) or source["name"]
+
+
 class Recommender:
     def __init__(self, spotify, features: FeatureChain, store: Store, params: RecommenderParams = RecommenderParams(),
                  feedback=None, deezer=None, lrclib=None, now: Callable[[], float] = time.time):
@@ -96,6 +112,10 @@ class Recommender:
         self.target: tuple[float, float] | None = None  # the goal the pool is aimed at (set_goal)
         self.mood: tuple[float, float] | None = None
         self._preview = None
+        # Where songs come from: "general" (taste, mood, languages; the default), "liked" (Liked Songs)
+        # or "playlist" (one of the user's own playlists, {"kind", "id", "name"}).
+        self.source: dict = {"kind": "general"}
+        self.loaded = False  # a playlist / Liked Songs source has been read at least once
 
     @classmethod
     def build(cls, client, feature_providers: list, cache, store_path, params: RecommenderParams, feedback=None):
@@ -122,6 +142,25 @@ class Recommender:
     def languages(self) -> list[str]:
         return list(self.profile.top_languages) if self.profile else []
 
+    # ------------------------------------------------------------- song source
+    @property
+    def custom(self) -> bool:
+        """True when the pool is one of the user's playlists or Liked Songs (not the general search)."""
+        return self.source.get("kind") in ("liked", "playlist")
+
+    def set_source(self, source: Mapping | None) -> bool:
+        """Choose where songs come from. Returns True if it changed (the pool must be rebuilt)."""
+        new = normalize_source(source)
+        if new == self.source:
+            return False
+        self.source = new
+        self.loaded = False
+        self._table = TrackTable([])
+        return True
+
+    def source_label(self) -> str:
+        return source_label(self.source)
+
     # ------------------------------------------------------------- goal
     def set_goal(self, target, mood) -> None:
         """Aim the pool at moving `mood` toward `target` (mood None = not known yet)."""
@@ -141,7 +180,10 @@ class Recommender:
         return sum(self.is_useful(t.point, mood, target) for t in self._table.tracks)
 
     def prune(self, mood=None, target=None) -> int:
-        """Drop pool songs that would take the mood away from the target. Returns how many remain."""
+        """Drop pool songs that would take the mood away from the target. Returns how many remain.
+        A playlist / Liked Songs pool is kept whole: it is all there is."""
+        if self.custom:
+            return len(self._table)
         self._table = TrackTable([t for t in self._table.tracks if self.is_useful(t.point, mood, target)])
         return len(self._table)
 
@@ -155,6 +197,7 @@ class Recommender:
         if self._preview is not None:
             self._preview.tried.clear()
         self.target = self.mood = None
+        self.loaded = False
         self.status = "cleared"
 
     def want_features(self, track_ids) -> None:
@@ -166,6 +209,13 @@ class Recommender:
     # ------------------------------------------------------------- refresh
     def refresh(self) -> TrackTable:
         started = time.monotonic()
+        if self.custom:
+            self.status = f"reading {self.source_label()}"
+            self._table = self._source_pool()
+            self.loaded = True
+            self.status = f"{len(self._table)} songs from {self.source_label()}"
+            log.info("recommender: %s (%.0fs)", self.status, time.monotonic() - started)
+            return self._table
         p = self.params
         if self.profile is None or self.now() - self.profile.built_at > p.profile_ttl_s:
             self.status = "reading your listening"
@@ -359,6 +409,33 @@ class Recommender:
             self.store.put_tracks(updates, self.now())
 
     # 5-6 --------------------------------------------------------- features and pool
+    def _source_pool(self) -> TrackTable:
+        """Every song of the chosen playlist / Liked Songs that has mood features. No language or taste
+        filter: the user picked these songs. Songs still without features are analysed on later refreshes."""
+        if self.source["kind"] == "liked":
+            metas = self.spotify.saved_tracks()
+        else:
+            metas = self.spotify.playlist_tracks(self.source["id"])
+        self.store.put_tracks(metas, self.now())  # the preview analysis looks names up here
+        with self._lock:
+            wanted, self._wanted_features = list(self._wanted_features), {}
+        feats = self.features.get_many(wanted + [t.id for t in metas])
+        today = date.fromtimestamp(self.now())
+        pool, seen = [], set()
+        for t in metas:
+            f = feats.get(t.id)
+            key = (title_core(t.name), artist_key(t.artists[0]) if t.artists else "")
+            if f is None or key in seen:
+                continue
+            seen.add(key)
+            pool.append(CatalogTrack(t.id, t.name, t.artists_text, f, t.duration_ms, explicit=t.explicit,
+                                     source="playlist", taste=0.5,
+                                     fresh=freshness(t.release_date, today, self.params.fresh_days)))
+        missing = len({t.id for t in metas}) - len(pool)
+        if missing > 0:
+            log.info("%s: %d songs have no mood data yet", self.source_label(), missing)
+        return TrackTable(pool)
+
     def _build_pool(self, artists: dict[str, tuple[float, str]]) -> TrackTable:
         p, prof = self.params, self.profile
         langs = set(prof.top_languages)

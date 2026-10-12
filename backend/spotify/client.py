@@ -296,6 +296,46 @@ class LiveSpotifyClient:
     def track_raw(self, track_id: str) -> dict | None:
         return self._call(self.sp.track, track_id)
 
+    # -- song sources (the user's own playlists, Liked Songs) ------------------
+    def my_playlists_raw(self) -> list[dict]:
+        """The user's own and collaborative playlists. Spotify doesn't let this app read the songs of
+        playlists the user only follows (403), so those are left out."""
+        me = (self._call(self.sp.current_user) or {}).get("id")
+        out, offset = [], 0
+        while True:
+            page = self._call(self.sp._get, "me/playlists", limit=50, offset=offset) or {}
+            rows = [p for p in page.get("items", []) if p]
+            out += [p for p in rows if (p.get("owner") or {}).get("id") == me or p.get("collaborative")]
+            if not page.get("next") or not rows:
+                return out
+            offset += len(rows)
+
+    def playlist_tracks_raw(self, playlist_id: str, limit: int = 500) -> list[dict]:
+        out, offset = [], 0
+        while len(out) < limit:
+            page = self._call(self.sp._get, f"playlists/{playlist_id}/items", limit=50, offset=offset,
+                              additional_types="track") or {}
+            rows = page.get("items", [])
+            out += [it for it in ((r.get("item") or r.get("track")) for r in rows) if it]
+            if not page.get("next") or not rows:
+                break
+            offset += len(rows)
+        return out[:limit]
+
+    def saved_tracks_raw(self, limit: int = 500) -> list[dict]:
+        out, offset = [], 0
+        while len(out) < limit:
+            page = self._call(self.sp.current_user_saved_tracks, limit=50, offset=offset) or {}
+            rows = page.get("items", [])
+            out += [r["track"] for r in rows if r.get("track")]
+            if not page.get("next") or not rows:
+                break
+            offset += len(rows)
+        return out[:limit]
+
+    def saved_tracks_count(self) -> int:
+        return int((self._call(self.sp.current_user_saved_tracks, limit=1) or {}).get("total") or 0)
+
     def audio_features(self, track_ids: list[str]) -> dict[str, Features]:
         out: dict[str, Features] = {}
         try:
@@ -357,6 +397,8 @@ class MockSpotifyClient:
         self.plays: list[tuple[str, bool]] = []  # (track_id, skipped) for finished plays
         self.calls = 0
         self.playlists: dict[str, list[list[str]]] = {}  # id -> [[entry uid, uri], ...]
+        self.user_playlists: dict[str, tuple[str, list[str]]] = {}  # song sources: id -> (name, track ids)
+        self.liked: list[str] = []
         self.deleted_playlists: list[str] = []
         self.context: str | None = None  # playing playlist URI
         self._reported_context: str | None = None
@@ -503,6 +545,24 @@ class MockSpotifyClient:
 
     def library_tracks(self, limit: int = 200) -> list[Track]:
         return [t for t, _ in list(self.catalog.values())[:limit]]
+
+    # Song sources: tests fill `user_playlists` ({id: (name, [track ids])}) and `liked`.
+    def _raw(self, tid: str) -> dict:
+        t = self.catalog[tid][0]
+        return {"type": "track", "id": t.id, "name": t.name, "artists": [{"name": t.artists, "id": ""}],
+                "duration_ms": t.duration_ms, "album": {"name": "", "release_date": ""}}
+
+    def my_playlists_raw(self) -> list[dict]:
+        return [{"id": pid, "name": name, "items": {"total": len(ids)}} for pid, (name, ids) in self.user_playlists.items()]
+
+    def playlist_tracks_raw(self, playlist_id: str, limit: int = 500) -> list[dict]:
+        return [self._raw(t) for t in self.user_playlists.get(playlist_id, ("", []))[1][:limit]]
+
+    def saved_tracks_raw(self, limit: int = 500) -> list[dict]:
+        return [self._raw(t) for t in self.liked[:limit]]
+
+    def saved_tracks_count(self) -> int:
+        return len(self.liked)
 
     # The mock has no search or top-track history; the recommender is off in mock mode.
     def top_tracks_raw(self, time_range: str = "short_term", limit: int = 50) -> list[dict]:

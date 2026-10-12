@@ -4,6 +4,9 @@
     "valence": 0.4,
     "energy": 0.15
   },
+  "song_source": {
+    "kind": "general"
+  },
   "paused": true,
   "moods": {
     "focused": {

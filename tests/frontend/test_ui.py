@@ -395,3 +395,30 @@ def test_dashboard_link_only_with_the_trace_on(qtbot, tmp_config, monkeypatch):
     assert app_mod.dev_dashboard() is None  # never in the installed app
     dev.timer.stop()
     dev.tray.hide()
+
+
+def test_songs_from_picker_lists_sources_and_saves_the_choice(qtbot, tmp_config):
+    app = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000)
+    qtbot.addWidget(app.window)
+    panel = app.panel
+    assert panel.source_row.text() == "Songs: For you"
+    state = {"paused": True, "playlists": [{"id": "pl1", "name": "Melody", "count": 24},
+                                           {"id": "pl2", "name": "Empty", "count": 0}], "liked_count": 120}
+    panel.show_state(state, "focused")
+    acts = [a for a in panel.source_menu().actions() if not a.isSeparator()]
+    assert [a.text() for a in acts] == ["For you  ·  taste, mood, languages", "Liked Songs  ·  120",
+                                        "Melody  ·  24", "Empty  ·  0"]
+    assert acts[0].isChecked() and not acts[3].isEnabled()  # an empty playlist can't be picked
+    acts[2].trigger()
+    assert load_config(tmp_config)["song_source"] == {"kind": "playlist", "id": "pl1", "name": "Melody"}
+    assert panel.source_row.text() == "Songs: Melody"
+    assert [a for a in panel.source_menu().actions() if a.text().startswith("Melody")][0].isChecked()
+    # While the playlist is read, and when it has nothing closer to the target:
+    panel.show_state({"paused": False, "session": {"status": "managing", "preparing": True},
+                      "song_source": {"kind": "playlist", "label": "Melody"}}, "focused")
+    assert "Reading Melody" in panel.details.text()
+    panel.show_state({"paused": False, "session": {"status": "managing", "preparing": False, "source_dry": True},
+                      "song_source": {"kind": "playlist", "label": "Melody"}}, "focused")
+    assert "Melody has no songs closer" in panel.details.text()
+    app.timer.stop()
+    app.tray.hide()

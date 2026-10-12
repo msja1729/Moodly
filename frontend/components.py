@@ -10,7 +10,8 @@ After the reference design (Glass design UI.jpg). Top to bottom:
     MOODS                 rows: glyph + label. The target is a lighter glass pill with a
                           white bar on the left edge and a chevron; a dot marks the mood
                           closest to how the music feels now
-    SESSION               Start session, or End / New session
+    SESSION               Songs: For you / Liked Songs / a playlist (opens a picker);
+                          Start session, or End / New session
     (avatar) name  ⇥ ⏻    the Spotify account in use, Log out, Quit
 
 The glass itself (tint, dark diagonal band, border) is painted by the window
@@ -37,8 +38,8 @@ from PyQt6.QtCore import (QEasingCurve, QObject, QPointF, QRectF, QSize, Qt, QTi
                           pyqtSignal)
 from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
                          QRadialGradient)
-from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel, QMenu, QSizePolicy,
+                             QVBoxLayout, QWidget)
 
 TEXT = "#F7F2F4"
 MUTED = "rgba(247, 242, 244, 175)"
@@ -63,6 +64,17 @@ QLabel#Section {{ color: rgba(247, 242, 244, 190); font-size: 10px; font-weight:
 QLabel#Song {{ font-size: 14px; font-weight: 700; }}
 QLabel#Muted {{ color: {MUTED}; font-size: 11px; font-weight: 500; }}
 QLabel#Account {{ font-size: 12px; font-weight: 700; }}
+"""
+
+# The "Songs from" picker: dark glass to match the sidebar.
+MENU_QSS = """
+QMenu { background: rgba(28, 22, 30, 240); color: #F7F2F4; border: 1px solid rgba(255, 255, 255, 50);
+        border-radius: 10px; padding: 6px; font-size: 12px; }
+QMenu::item { padding: 7px 22px 7px 26px; border-radius: 7px; }
+QMenu::item:selected { background: rgba(255, 255, 255, 36); }
+QMenu::item:disabled { color: rgba(247, 242, 244, 120); }
+QMenu::indicator { width: 14px; left: 7px; }
+QMenu::separator { height: 1px; background: rgba(255, 255, 255, 40); margin: 5px 8px; }
 """
 
 # What the sidebar says when the playlist session isn't actively shaping the queue.
@@ -663,6 +675,7 @@ class SidebarPanel(QWidget):
     logoutRequested = pyqtSignal()
     tintChanged = pyqtSignal(QColor)
     playerCommand = pyqtSignal(str)  # "play", "pause" or "next"
+    songSourceSelected = pyqtSignal(dict)  # {"kind": "general" | "liked" | "playlist", "id", "name"}
 
     def __init__(self, moods: Mapping[str, Mapping[str, Any]], parent: QWidget | None = None):
         super().__init__(parent)
@@ -674,6 +687,9 @@ class SidebarPanel(QWidget):
         self._playback: tuple[float, float, bool, float] | None = None  # progress_ms, duration_ms, playing, at
         self._pending_play: tuple[bool, float] | None = None  # a play/pause click Spotify hasn't confirmed yet
         self._cover_url: str | None = None
+        self.source: dict = {"kind": "general"}
+        self._playlists: list[dict] = []  # the user's own playlists (from the daemon)
+        self._liked_count: int | None = None
         self.covers = CoverLoader(self)
         self.covers.loaded.connect(self._cover_loaded)
 
@@ -771,6 +787,11 @@ class SidebarPanel(QWidget):
 
         # Session controls and the account.
         padded(section_label("Session"), 0, 4)
+        self.source_row = GlassRow("♫", "Songs: For you")
+        self.source_row.setToolTip("Where new songs come from: For you (your taste, mood and languages), "
+                                   "your Liked Songs, or one of your playlists")
+        self.source_row.clicked.connect(self.open_source_menu)
+        root.addWidget(self.source_row)
         self.start_session = GlassRow("▶", "Start session")
         self.end_session = GlassRow("■", "End session")
         self.new_session = GlassRow("↻", "New session")
@@ -787,7 +808,7 @@ class SidebarPanel(QWidget):
             root.addWidget(row)
         self.logout.clicked.connect(self.logoutRequested.emit)
         self.quit.clicked.connect(self.quitRequested.emit)
-        self.rows = [*self.tiles.values(), self.start_session, self.end_session, self.new_session]
+        self.rows = [*self.tiles.values(), self.source_row, self.start_session, self.end_session, self.new_session]
         root.addStretch(1)
         padded(Divider(), 2, 8)
 
@@ -846,6 +867,52 @@ class SidebarPanel(QWidget):
                                    f'📈 Mood path dashboard ↗</a>')
             self.dashboard.setToolTip(f"Testing: open {url}")
         self.dashboard.setVisible(bool(url))
+
+    # ------------------------------------------------------------- song source
+    def set_source(self, source) -> None:
+        """Show where songs come from (the config's `song_source`)."""
+        from recommender.engine import normalize_source, source_label
+        self.source = normalize_source(source)
+        label = source_label(self.source)
+        text = f"Songs: {label}"
+        width = max(self.source_row.width() - 80, 150)
+        self.source_row.setText(QFontMetrics(ui_font(10.5, QFont.Weight.DemiBold)).elidedText(
+            text, Qt.TextElideMode.ElideRight, width))
+        self.source_row.setToolTip(f"Songs come from: {label}. Click to choose For you, Liked Songs or a playlist.")
+
+    def source_menu(self) -> QMenu:
+        """The picker: For you, Liked Songs, then the user's own playlists (the current one ticked)."""
+        menu = QMenu(self)
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # round corners
+        menu.setStyleSheet(MENU_QSS)
+        menu.setFont(ui_font(10.5))
+
+        def add(text: str, source: dict, enabled: bool = True) -> None:
+            act = menu.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(source == self.source or (source["kind"] != "playlist" and source["kind"] == self.source["kind"]))
+            act.setEnabled(enabled)
+            act.triggered.connect(lambda _=False, s=source: self.songSourceSelected.emit(s))
+
+        add("For you  ·  taste, mood, languages", {"kind": "general"})
+        liked = f"Liked Songs  ·  {self._liked_count}" if self._liked_count is not None else "Liked Songs"
+        add(liked, {"kind": "liked"}, self._liked_count != 0)
+        menu.addSeparator()
+        if self._playlists:
+            for pl in self._playlists:
+                name = pl["name"] if len(pl["name"]) <= 34 else pl["name"][:33] + "…"
+                add(f"{name}  ·  {pl.get('count', 0)}", {"kind": "playlist", "id": pl["id"], "name": pl["name"]},
+                    pl.get("count", 0) > 0)
+        else:
+            act = menu.addAction("Your playlists appear here")
+            act.setEnabled(False)
+        return menu
+
+    def open_source_menu(self) -> None:
+        menu = self.source_menu()
+        menu.exec(self.source_row.mapToGlobal(QPointF(GlassRow.INSET, self.source_row.height()).toPoint()))
 
     def set_selected(self, key: str) -> None:
         if key in self.tiles and not self.tiles[key].isChecked():
@@ -926,6 +993,9 @@ class SidebarPanel(QWidget):
         for k, tile in self.tiles.items():
             tile.set_marked(k == nearest)
         self._show_track(state)
+        if state and state.get("playlists") is not None:
+            self._playlists = list(state.get("playlists") or [])
+            self._liked_count = state.get("liked_count")
         if not state:
             self.details.setText("Daemon not running")
             return
@@ -937,10 +1007,19 @@ class SidebarPanel(QWidget):
             self.details.setText(SESSION_NOTES[session["status"]])
             return
         rec = state.get("recommender")
+        source = state.get("song_source") or {}
+        custom = source.get("kind") in ("liked", "playlist")
         if session and session.get("preparing"):
+            if custom:
+                self.details.setText(f"Reading {source.get('label')} - nothing is added until then")
+                return
             ready = f" ({rec['useful']}/{rec['ready_songs']} ready)" if rec else ""
             langs = f" in {', '.join(rec['languages'])}" if rec and rec.get("languages") else ""
             self.details.setText(f"Preparing songs for you{langs}{ready} - nothing is added until then")
+            return
+        if custom and session and session.get("source_dry"):
+            self.details.setText(f"{source.get('label')} has no songs closer to the target - "
+                                 f"this is as close as it gets")
             return
         parts = []
         if state.get("deviation") is not None:

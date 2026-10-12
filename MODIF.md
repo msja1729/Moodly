@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M24 · A link to the mood path dashboard, for testing (at the end, after the summary).
+**Latest:** M25 · Songs from one of your playlists or Liked Songs (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M23)
+## Summary of earlier modifications (M1–M24)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -33,25 +33,54 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M21 | 10-12 | **Mood path trace and live plot (testing)** | Wanted to see the mood move toward the target while listening. | Opt-in trace (`AMBIENT_MOOD_TRACE`) of every cycle/song change; a local web viewer (`tools/mood_trace_view.py`) plots it live. 233 tests. |
 | M22 | 10-12 | **Player controls, album cover, sync under 1 s, simpler mood path view** | The mood path page was hard to read; the sidebar lacked a cover and player buttons; sync took up to 3 s. | Cover art, Play/Pause and Next (sidebar → `data/player.cmd` → daemon → Spotify), a time readout, a small mood map at the side; polling 0.75 s / 2 s; the mood path page rewritten around "right now", "up next" and what Moodly did. 237 tests. |
 | M23 | 10-12 | **Release 0.3.0 for Windows and Mac** | The new frontend and backend were only on `dev`. | `dev` merged into `main`; `v0.3.0` published with the Windows installer and both Mac `.dmg` files and plain-language notes (including "turn off Repeat"). |
+| M24 | 10-12 | **A link to the mood path dashboard (dev only)** | Opening the dashboard took a separate command. | `tools/dev_dashboard.ps1`/`.sh` run the app with the trace; the app serves the dashboard and shows a link in the sidebar and tray menu. Never in the installed app; `dev` only. 238 tests. |
 
 ---
 
-## M24 · A link to the mood path dashboard, for testing · 2026-10-12 · `🆕 LATEST` · `dev` only
+## M25 · Songs from one of your playlists or Liked Songs · 2026-10-12 · `🆕 LATEST`
 
-**Request:** a link to open the mood path dashboard while testing, kept only on the development branch.
+**Request:** users can choose where the songs come from:
+- **general**, as now (taste, mood, languages)
+- **one of their playlists**: the pool is the playlist's songs
+
+**Decisions (asked):**
+- With a playlist, **stay in the playlist**. The mood gets as close to the target as the playlist allows, the sidebar says so, and songs may repeat.
+- **Liked Songs** is offered too.
+
+**Checked first:** with the app's access, Spotify returns the songs of the user's own playlists ("Eng songs", "Melody") but answers 403 for playlists they only follow. So only own and collaborative playlists are listed.
 
 **Modifications:**
-1. **One command to test:** `.\tools\dev_dashboard.ps1` (Windows) or `bash tools/dev_dashboard.sh` (macOS) runs the app from source with `AMBIENT_MOOD_TRACE=data/mood_trace.jsonl`.
-2. **The app serves the dashboard itself** (`frontend/app.py`, `dev_dashboard()`):
-   - When it runs from source with the trace on, it starts the viewer in a background thread (`tools.mood_trace_view.start_in_background`).
-   - If a viewer is already running on port 8765, that one is used.
-3. **The link:**
-   - A "📈 Mood path dashboard ↗" link under the status line in the sidebar.
-   - A "Mood path dashboard (testing)" item in the tray menu.
-   - Both open http://127.0.0.1:8765 in the browser.
-4. **Never for users:** there's no link and no server in the installed app (`FROZEN`) or without the trace.
-5. **Branch:** committed to `dev` only; `main` and the 0.3.0 release don't have it.
+1. **Spotify client** (`backend/spotify/client.py`):
+   - `my_playlists_raw()` (own and collaborative), `playlist_tracks_raw()`, `saved_tracks_raw()`, `saved_tracks_count()`
+   - the mock gets `user_playlists` and `liked` for tests
+2. **Recommender** (`recommender/engine.py`):
+   - `source` (`normalize_source`, `source_label`), `set_source()` and `custom`.
+   - When a playlist or Liked Songs is chosen, `refresh()` builds the pool from those songs (`_source_pool`): any language, taste 0.5 for all (so taste doesn't reorder them), one copy each, and songs with features only (the others are analysed on later refreshes).
+   - `prune()` keeps the pool whole, and `loaded` marks that it has been read.
+3. **Session** (`backend/actuators/session.py`):
+   - `allow_repeats`: the keep-going fill plays the playlist's songs again when the unplayed ones run out.
+   - `source_dry`: set when a cycle had a waypoint but nothing in the playlist was closer to the target.
+4. **Daemon** (`backend/daemon.py`):
+   - reads `song_source` at start and on every config change. A change during a session clears the pool and prepares again.
+   - a playlist pool goes to the session with no language filter and no catalog fallback.
+   - it's ready as soon as it has been read (no waiting for 15 songs).
+   - the playlist list and Liked Songs count are read every 10 min (the session playlist is left out).
+   - the state has `song_source`, `playlists`, `liked_count` and `session.source_dry`.
+5. **Sidebar** (`frontend/components.py`, `frontend/app.py`):
+   - A **"♫ Songs: For you"** row in the Session section opens a dark-glass picker: For you · Liked Songs (count) · your playlists (counts; empty ones disabled; the current one ticked).
+   - The choice is saved with `set_song_source()` (`shared/config_io.py`).
+   - Status lines: "Reading Melody - nothing is added until then" while it loads, and "Melody has no songs closer to the target - this is as close as it gets".
+6. `config.json`: `"song_source": {"kind": "general"}`.
+7. **Docs:** SPEC (song source, acceptance), MANUAL (the Songs row).
 
-**Tests:** 238 pass. New: the link and tray item appear only with a dashboard URL; `dev_dashboard()` returns nothing without the trace or in the installed app.
+**Checked on screen:** the row fits under SESSION, and the picker shows the tick and greyed-out empty playlists.
 
-**Note:** a later merge of `dev` into `main` would bring this along. It stays invisible to users even then.
+**Tests:** 242 pass. New:
+- the recommender builds the whole playlist / Liked Songs pool (any language, no copies, waits for missing data, keeps everything on prune, no id → For you)
+- daemon end to end: switching to a playlist clears and prepares, it's ready at once, the session gets only the playlist with no language filter or fallback and with repeats, and every song added is from it; switching back restores For you
+- the picker lists only own playlists and never the session playlist
+- the sidebar picker lists the sources, saves the choice and shows the status lines
+
+**Not done / limits:**
+- Up to 500 songs per playlist / Liked Songs.
+- Songs without mood data are analysed 20 per refresh (preview analysis), so a big playlist fills in over a few minutes.
