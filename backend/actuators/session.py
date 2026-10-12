@@ -38,6 +38,8 @@ import math
 from collections import deque
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from backend.trace import MoodTrace
 from typing import Callable, Mapping
 
 import numpy as np
@@ -145,6 +147,9 @@ class PlaylistSession:
         self.markov = markov
         self.rng = rng or np.random.default_rng()
         self.state_file = state_file
+        self.trace = MoodTrace.from_env()  # developer mood-path log; None unless AMBIENT_MOOD_TRACE is set
+        self._target: Point | None = None
+        self._window_names: dict[str, str] = {}
 
         self.status = IDLE
         self.playlist_id: str | None = None
@@ -401,6 +406,8 @@ class PlaylistSession:
                 self.needs_more_songs = True
         self.mood, self.deviation = plan.mood, plan.deviation
         self._window_points = [(it.uri, it.point) for it in window]
+        self._target = target
+        self._window_names = {it.uri: f"{it.artists} - {it.name}" for it in window}
 
         # Removals: by URI (Spotify removes every occurrence), never a protected song.
         remove_uris = [window[i].uri for i in plan.removals if window[i].uri not in protected_uris]
@@ -446,6 +453,15 @@ class PlaylistSession:
                 self.feedback.log_intervention(now, "playlist_add", f"{track.uri} dir={plan.direction}", self.mood)
             for u in remove_uris:
                 self.feedback.log_intervention(now, "playlist_remove", u, self.mood)
+        if self.trace is not None:
+            planned = len(plan.insertions)
+            self.trace.cycle(
+                reason=reason, target=target, plan=plan, window=window,
+                added=[{"name": f"{t.artists} - {t.name}", "point": list(t.point), "position": p,
+                        "why": "plan" if i < planned else "keep music going"}
+                       for i, (p, t) in enumerate(insertions)],
+                removed=removed_names, preparing=self.preparing,
+                needs_more_songs=self.needs_more_songs, queue_size=self.queue_size)
         if (added or remove_uris or self._resync_pending) and self.params.resync_after_edits:
             if in_playlist:
                 self._resync(ps, cur)
@@ -528,6 +544,8 @@ class PlaylistSession:
         pts = [p for _, p in self._window_points[: self.selection.window_size] if p is not None]
         if pts:
             self.mood = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+        if self.trace is not None:
+            self.trace.song(self._window_names.get(uri, uri), self._window_points[0][1], self.mood, self._target)
 
     def take_intervention(self, ended_track_id: str) -> tuple[str, Direction | None]:
         direction = self.pending.pop(ended_track_id, None)
@@ -550,6 +568,8 @@ class PlaylistSession:
                 log.warning("could not hand the upcoming songs back to your queue: %s", e)
         self._delete_playlist()
         self.status = IDLE
+        if self.trace is not None:
+            self.trace.write("end", mood=self.mood and list(self.mood))
         log.info("session ended")
 
     def _delete_playlist(self) -> None:

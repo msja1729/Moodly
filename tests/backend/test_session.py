@@ -428,3 +428,31 @@ def test_mood_moves_as_soon_as_the_next_song_starts(big_catalog, clock):
     assert s.mood != before
     pts = [p for _, p in s._window_points[:SelectionParams().window_size] if p]
     assert s.mood == pytest.approx((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))
+
+
+def test_mood_trace_records_cycles_songs_and_end_only_when_enabled(big_catalog, clock, tmp_path, monkeypatch):
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    assert make_session(client, big_catalog, clock).trace is None  # off by default
+    path = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("AMBIENT_MOOD_TRACE", str(path))
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    s.cycle(FOCUSED, "start")
+    n_cycles = len(path.read_text(encoding="utf-8").splitlines())
+    s.trace.cycle(reason="timer", target=FOCUSED, plan=type("P", (), {"mood": s.mood, "waypoint": None, "deviation": 0,
+                  "direction": None, "settled": False})(), window=[], added=[], removed=[], preparing=False,
+                  needs_more_songs=False, queue_size=0)
+    s.trace.cycle(reason="timer", target=FOCUSED, plan=type("P", (), {"mood": s.mood, "waypoint": None, "deviation": 0,
+                  "direction": None, "settled": False})(), window=[], added=[], removed=[], preparing=False,
+                  needs_more_songs=False, queue_size=0)  # nothing changed: not written again
+    assert len(path.read_text(encoding="utf-8").splitlines()) == n_cycles + 1
+    s.note_started(s._window_points[1][0].rsplit(":", 1)[-1])
+    s.end()
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [e["kind"] for e in events] == ["cycle", "cycle", "song", "end"]
+    c = events[0]
+    assert c["reason"] == "start" and c["target"] == list(FOCUSED) and len(c["mood"]) == 2
+    assert c["waypoint"] is not None and c["added"]
+    assert all(len(a["point"]) == 2 and a["name"] for a in c["added"])
+    assert len(c["window"]) >= 5 and all(w["point"] for w in c["window"])
+    assert events[2]["mood"] == pytest.approx(list(s.mood), abs=1e-4)

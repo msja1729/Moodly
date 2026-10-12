@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M20 · Waves instead of the pointer light, bolder text, no crosshair or window dots (at the end, after the summary).
+**Latest:** M21 · Mood path trace and live plot, for testing (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M19)
+## Summary of earlier modifications (M1–M20)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -29,36 +29,30 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M17 | 10-12 | **Live sidebar and glass design that follows the mood** | Song, mood dot and details lagged up to a minute and weren't in sync; the sidebar didn't match the reference glass design. | Spotify polled every 3 s (and right after a song ends); mood re-averaged when a song starts; `state.json` written at once on visible changes and watched by the UI; live progress bar. Sidebar rebuilt after `Glass design UI.jpg` (rows with glass pill + edge bar + chevron, account row); tint follows the mood (amber/rose/violet/teal) and glides. 228 tests. |
 | M18 | 10-12 | **Real glass: transparent, blurred background, round corners** | Square edges and thick, opaque glass: the Windows Acrylic call painted black behind Qt's transparent window, in a full rectangle. | Acrylic call removed; a snapshot of the screen behind the sidebar is taken as it opens, blurred and drawn under thinner glass (tint alpha 125/80/70). Same on Windows and macOS; checked on screen. 229 tests. |
 | M19 | 10-12 | **Pointer effects** | The sidebar should react to the mouse like modern websites. | A light in the mood colour followed the pointer and the edge shone near it; rows: hover pill fade, inner light, icon nudge, click ripple; the selection slides between moods; mood map crosshair readout and breathing dot. 232 tests. |
+| M20 | 10-12 | **Waves instead of the pointer light, bolder text, no crosshair or window dots** | The pointer light was too bright and hid the text; the text should be bolder; the map crosshair and window dots weren't wanted. | Soft waves behind the text when the pointer moves (one per 38 px, fade over 1.6 s); `ui_font()` with heavier weights; crosshair, readout and window dots removed. 232 tests. |
 
 ---
 
-## M20 · Waves instead of the pointer light, bolder text, no crosshair or window dots · 2026-10-12 · `🆕 LATEST`
+## M21 · Mood path trace and live plot, for testing · 2026-10-12 · `🆕 LATEST`
 
-**Feedback on M19:**
-1. The pointer light was too bright and made text hard to read. Wanted instead: folds/waves when the pointer moves, behind the text.
-2. The text should be bolder, in a better font.
-3. The mood map crosshair isn't good.
-4. The macOS-style window dots at the top serve no purpose.
+**Request:** while songs play, see the path of the mood toward the target, cycle by cycle, in a detailed and accurate plot. This is for testing only; users don't get it.
 
 **Modifications:**
-1. **Waves in the glass** (`frontend/app.py`, `GlassWindow`):
-   - The pointer light and edge shine are removed.
-   - `track()` now spawns a wave every 38 px of pointer movement (`WAVE_STEP`). Its strength is 0.45 plus the speed, and at most 14 waves exist at a time.
-   - `_paint_waves()` draws each wave as a wide ring (26–48 px), darker inside (alpha ≤ 30) and lighter in the mood colour outside (≤ 40), so it reads as a fold in the glass.
-   - Each wave spreads ~150 px with an ease-out and fades over 1.6 s.
-   - The waves are painted in the glass layer, so all text, rows and the mood map sit on top.
-   - Waves are cleared when the sidebar hides.
-2. **Bolder, modern text** (`frontend/components.py`):
-   - `ui_font()` with Segoe UI Variable Text, then Segoe UI, then the macOS system font, without hinting.
-   - Weights: title 800 (26 px), song, section and account 700, rows 600 (selected 700), details and axis labels 500/600.
-   - Muted text is a bit brighter (alpha 150 → 175).
-3. **Mood map:** the crosshair, the readout and the cross cursor are removed (`describe()` too). The breathing dot stays.
-4. **Window dots removed** (`WindowDots`, the panel's `closeRequested`); the title moves up. Clicking outside still hides the sidebar.
-5. **Row inner light** made fainter (alpha 48 → 26).
-6. **Docs:** SPEC (waves, text, map, layout), MANUAL.
+1. **Trace** (`backend/trace.py`, hooked into `PlaylistSession`):
+   - Off unless the environment variable `AMBIENT_MOOD_TRACE` names a file. The tray app passes its environment on to the daemon.
+   - Writes one JSON line per event:
+     - `cycle`: reason, target, mood (queue average), deviation, waypoint and Markov direction, settled / preparing / waiting-for-songs flags, queue size, every song in the window with its (valence, energy), and the songs added (point, position, `plan` or `keep music going`) and removed.
+     - `song`: a new song started, with the mood re-averaged at once.
+     - `end`: the session ended.
+   - A timer cycle that changed nothing is not written again.
+   - The values are the same numbers the session uses (no recomputation).
+2. **Live viewer** (`tools/mood_trace_view.py`, Python standard library only):
+   - Run with `python -m tools.mood_trace_view` and open http://127.0.0.1:8765. It re-reads the trace every 2 s.
+   - **Mood plane:** the 10×10 Markov grid, quadrant names and mood presets; the mood path numbered and coloured old to new, with arrows; song-change steps; waypoints, linked to the mood they started from; songs added; the target, with 0.05/0.1/0.2 rings; optionally the current queue's songs. Hover any point for its details.
+   - **Panels:** current stats (distance now and at the start, % closed, cycles, songs added and removed); distance to the target over time; valence and energy over time against the target; a step table with every song added and removed.
+   - Each session is shown separately and can be picked from a list.
+3. `data/mood_trace.jsonl` is git-ignored.
 
-**Checked on screen:** a simulated pointer stroke over the reference backdrop (`docs/sidebar-waves.png`). The first version's rings looked busy, so they were made wider and softer and spawn less often (26 → 38 px). The text stays readable over them.
+**Checked:** a mock-Spotify run (calm target) plotted correctly: the mood went from (0.90, 0.95) toward (0.60, 0.25), and 64% of the distance was closed in 25 cycles.
 
-**Tests:** 232 pass. Updated:
-- no waves while the pointer stands still, one every 38 px, faded after 1.6 s, capped at 14, cleared on hide
-- the map has no crosshair (arrow cursor) and breathes only while shown
+**Tests:** 233 pass. New: the trace is off by default; with it on, it records cycle, song and end events with points, waypoint and added songs, and skips a cycle that changed nothing.
