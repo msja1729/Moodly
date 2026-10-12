@@ -311,3 +311,22 @@ def test_the_picker_lists_own_playlists(tmp_config, catalog, clock):
     assert state["playlists"] == [{"id": "pl1", "name": "Melody", "count": 3}]  # never the session playlist
     assert state["liked_count"] == 2
     daemon.shutdown()
+
+
+def test_ready_step_uses_the_pool_that_just_finished(tmp_config, catalog, clock):
+    # The refresh can finish (loaded) just before it hands its pool over; the "ready" step must still use it.
+    from shared.config_io import set_song_source
+    daemon, s, rec, client = make_daemon(tmp_config, catalog, clock)
+
+    async def run():
+        set_song_source({"kind": "liked"}, tmp_config)
+        set_paused(False, tmp_config)
+        await daemon.reload_config()
+        if daemon._rec_thread is not None:
+            await asyncio.to_thread(daemon._rec_thread.join, 5)
+        daemon._rec_ready = True
+        await daemon._check_ready()
+        assert not s.preparing and s.table is rec.pool and len(s.table)
+
+    asyncio.run(run())
+    daemon.shutdown()

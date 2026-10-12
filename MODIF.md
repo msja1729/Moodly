@@ -69,9 +69,11 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
    - Removals, "settled" and the shown mood use the listening mood.
    - The trace records `ahead` and each window song's `ours` flag.
 6. Tests start from "For you", whatever was last picked in the sidebar (`conftest.py`).
-7. **Docs:** SPEC (mood, removal rule, relinking), MANUAL (how fast).
+7. **Ready step:** the pool that has just finished is handed to the session before the first "ready" step. A live test showed that step adding nothing: it ran a moment before the 141 Liked Songs arrived.
+8. **Docs:** SPEC (mood, removal rule, relinking), MANUAL (how fast).
 
-**Tests:** 247 pass. New:
+**Tests:** 248 pass. New:
+- the ready step uses the pool that just finished
 - relinked ids in Spotify's queue remove nothing
 - a queue that doesn't line up removes nothing
 - the mood is the song playing plus the user's songs, not Moodly's picks

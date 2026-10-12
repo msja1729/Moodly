@@ -314,6 +314,7 @@ class Daemon:
         # A playlist / Liked Songs source is ready once it has been read: it won't grow by waiting.
         if useful >= rec.params.ready_songs or waited >= rec.params.prepare_max_s or (rec.custom and rec.loaded):
             s.preparing = False
+            self._apply_rec()  # the refresh may have finished a moment ago: hand its pool over first
             log.info("%d useful songs ready after %.0fs; the session starts adding songs", useful, waited)
             await self._session_step("ready")
 
