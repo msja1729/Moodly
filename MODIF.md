@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M27 · Songs no longer cut a second after they start; each session starts fresh (at the end, after the summary).
+**Latest:** M28 · No more lag; a popup asks where songs come from at Start / New session (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M26)
+## Summary of earlier modifications (M1–M27)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -36,32 +36,43 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M24 | 10-12 | **A link to the mood path dashboard (dev only)** | Opening the dashboard took a separate command. | `tools/dev_dashboard.ps1`/`.sh` run the app with the trace; the app serves the dashboard and shows a link in the sidebar and tray menu. Never in the installed app; `dev` only. 238 tests. |
 | M25 | 10-12 | **Songs from one of your playlists or Liked Songs** | Users wanted songs from a playlist of theirs, not only the general search. | A "Songs:" picker (For you / Liked Songs / own playlists); a playlist pool has no language filter, no top-up, repeats allowed, ready once read; "no songs closer" note. 242 tests. |
 | M26 | 10-12 | **Good songs no longer removed; the mood is what you listen to** | Mass removals (relinked ids made the playlist look like the user's own queue, so every song was a "duplicate"); far-from-target-only removals after a new target; the mood counted Moodly's unplayed picks. | Songs matched by title + artists; misread-queue guard; one removal rule (far from both); mood = the song playing + the user's own songs; the planner steps from where the queue is heading. 248 tests. |
+| M27 | 10-12 | **Songs no longer cut a second after they start; each session starts fresh** | After adding songs, the reload "at position N" started the next song (Spotify counts an entry its API doesn't list); a new session remembered the last one's played/added songs. | Reload at the song itself (`offset.uri`), looked up again after the edits; per-session reset. 250 tests. |
 
 ---
 
-## M27 · Songs no longer cut a second after they start; each session starts fresh · 2026-10-12 · `🆕 LATEST`
+## M28 · No more lag; a popup asks where songs come from at Start / New session · 2026-10-12 · `🆕 LATEST`
 
-**Problems (live test 15:11–15:20, Liked Songs → Energized):**
-1. **Songs were cut 1–2 s after they started.** Three times a song started, the cycle about 3 s later added songs and reloaded the playlist, and a second later the next song played:
-   - 15:17:06 *Chammak Challo* → 15:17:11 *Aarzu*
-   - 15:17:57 *Chinni Gundelo* → 15:18:01 *Saiyaara*
-   - 15:19:08 *Kalank* → 15:19:12 *Salam Anali*
-
-   Cause: the reload (`play_context`) started the playlist "at position N" (the song playing in the app's listing), and Spotify started the song after it. So Spotify's count of the entries was one ahead of what its API lists. The constant "queue doesn't line up" warnings fit the same mismatch.
-2. **The U-turn on the path** (0.59 → 0.53 at 15:17:11): *Chammak Challo* (0.94, 0.88) was cut after 2 s. The song after it, *Aarzu*, has no mood data, so the mood fell back to the user's own songs ahead (lower).
-3. **A new session remembered the last one.** The played, added and removed songs carried over, so at 15:15:48 *Lutt Le Gaya* and *Dhurandhar* were removed as "already played": they had played in the 14:49 session.
-4. **A mismatch from M26:** `start()` still recorded Spotify's copy of the playlist by id, while the rest compares title + artists.
+**Problems (live test 15:26–15:33, Liked Songs):**
+1. **The sidebar and the dashboard lagged behind Spotify.** Measured, the sidebar itself is fast (a refresh takes 0.7 ms, a full repaint 3.3 ms). The delay was in the backend:
+   - On a new song, it ran the whole session step (read the playlist and queue, choose songs, add them, reload Spotify; 2 s or more, longer when Spotify was slow, e.g. a 5 s timeout at 15:30:12) before writing the new song to `state.json`.
+   - It didn't poll Spotify meanwhile.
+2. **"It doesn't add songs from Liked Songs."** It did: every song added from 15:28 on is in Liked Songs (checked against the account). 8 of the 11 songs in the screenshot are Liked Songs. The other two (*Ishq Jalakar*, *Samjhawan*) were already in the user's Spotify queue at Start session and were moved into the session playlist as the user's own songs. So no fix was needed for this.
+3. **Pause/Play sometimes failed** with Spotify's 404 "no active device", right after a playlist reload.
+4. **Wanted:** at Start session or New session, a popup asking where songs should come from (For you or a playlist), in the same design with the background blurred. Picking an option starts the session at once.
 
 **Modifications:**
-1. **Reload at the song, not the position:**
-   - `play_context(..., track_uri=)` uses Spotify's "start at this track" offset (`offset.uri`).
-   - `_play_at()` names the song whenever it is in the playlist once (by position only if it appears twice).
-   - This applies to the reload after edits, to moving on from a removed song, and to the hand-over at start.
-2. **The song is looked up again after the edits**, before the reload. With a hidden entry, a song inserted "right after the current one" can land just before it.
-3. **Each session starts fresh:** `start()` resets the played, added and removed songs, the pending skip feedback, the last window and `source_dry`.
-4. `start()` records Spotify's copy by title + artists, and de-duplicates the hand-over songs the same way.
-5. **Test mock:** `unlisted` entries that Spotify plays and counts but its API doesn't list, to reproduce the cut.
+1. **Backend never holds up the sidebar** (`backend/daemon.py`):
+   - A new song is written to `state.json` at once.
+   - Live, session steps (song change, timer, ready) run as background tasks (`background_steps`, `_spawn`), so Spotify keeps being polled. The session lock still keeps steps one at a time.
+   - Each step writes the state when it finishes. Tests run steps inline.
+2. **Pause/Play:** one retry after 0.7 s on a 404.
+3. **Sidebar refresh:** only when `state.json` really changed (its time and size). The data folder's logs and databases no longer trigger refreshes.
+4. **Dashboard:** the trace is parsed once per change and served with an `ETag`. Unchanged polls get a 304 and the page keeps what it has.
+5. **Start / New session popup** (`SourcePicker` in `frontend/components.py`, wired in `frontend/app.py`):
+   - "Where should songs come from?": For you · new picks, Liked Songs (count), then your playlists (count; empty ones dimmed). The current choice is marked.
+   - A glass card in the mood colour over a blurred snapshot of the sidebar, with a dark veil that fades in (180 ms).
+   - Picking saves the source and closes the popup immediately, then starts (`set_paused(False)`) or restarts (`start_new_session`) the session.
+   - Esc, Cancel, a click outside, or closing the sidebar cancels and starts nothing.
+   - The "Songs:" row stays, for changing the source during a session.
+   - `SidebarPanel.source_options()` and `is_current()` are shared by the row's menu and the popup.
+   - Disabled rows are drawn at 40% opacity.
+6. **Docs:** SPEC (popup, sync), MANUAL (Start session).
 
-**Tests:** 250 pass. New:
-- with a hidden entry, adding songs never cuts the song playing (this test fails with the old position-based reload)
-- a new session forgets the last one
+**Checked on screen:** the popup over the blurred sidebar, with Liked Songs marked and the empty playlist dimmed.
+
+**Tests:** 252 pass.
+- New:
+  - a slow session step doesn't stop polling, and the playing song is shown
+  - the popup can be cancelled (Esc, closing the sidebar)
+- Updated:
+  - the session buttons go through the popup: Liked Songs → start; New session → For you

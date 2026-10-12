@@ -76,14 +76,23 @@ def test_session_buttons_write_config(qtbot, tray_app, tmp_config):
     tray_app.end_session()  # as at launch: no session yet
     tray_app.show_sidebar()
     assert panel.start_session.isVisible() and not panel.end_session.isVisible()
+    # Start session asks where songs come from first; nothing starts until an option is picked.
     qtbot.mouseClick(panel.start_session, Qt.MouseButton.LeftButton)
-    assert load_config(tmp_config)["paused"] is False
+    picker = tray_app.picker
+    assert picker.isVisible() and load_config(tmp_config)["paused"] is True
+    assert [r.text() for r in picker.rows][:2] == ["For you  ·  new picks", "Liked Songs"]
+    qtbot.mouseClick(picker.rows[1], Qt.MouseButton.LeftButton)  # Liked Songs
+    cfg = load_config(tmp_config)
+    assert not picker.isVisible() and cfg["paused"] is False and cfg["song_source"] == {"kind": "liked"}
     assert panel.end_session.isVisible() and panel.new_session.isVisible() and not panel.start_session.isVisible()
 
     seq = load_config(tmp_config).get("session_seq", 0)
     qtbot.mouseClick(panel.new_session, Qt.MouseButton.LeftButton)
+    assert picker.isVisible() and picker.rows[1].marked  # the current choice is marked
+    qtbot.mouseClick(picker.rows[0], Qt.MouseButton.LeftButton)  # For you
     cfg = load_config(tmp_config)
     assert cfg["session_seq"] == seq + 1 and cfg["paused"] is False  # the daemon ends + restarts on this
+    assert cfg["song_source"] == {"kind": "general"}
 
     qtbot.mouseClick(panel.end_session, Qt.MouseButton.LeftButton)
     assert load_config(tmp_config)["paused"] is True
@@ -406,7 +415,7 @@ def test_songs_from_picker_lists_sources_and_saves_the_choice(qtbot, tmp_config)
                                            {"id": "pl2", "name": "Empty", "count": 0}], "liked_count": 120}
     panel.show_state(state, "focused")
     acts = [a for a in panel.source_menu().actions() if not a.isSeparator()]
-    assert [a.text() for a in acts] == ["For you  ·  taste, mood, languages", "Liked Songs  ·  120",
+    assert [a.text() for a in acts] == ["For you  ·  new picks", "Liked Songs  ·  120",
                                         "Melody  ·  24", "Empty  ·  0"]
     assert acts[0].isChecked() and not acts[3].isEnabled()  # an empty playlist can't be picked
     acts[2].trigger()
@@ -422,3 +431,15 @@ def test_songs_from_picker_lists_sources_and_saves_the_choice(qtbot, tmp_config)
     assert "Melody has no songs closer" in panel.details.text()
     app.timer.stop()
     app.tray.hide()
+
+
+def test_source_picker_can_be_cancelled(qtbot, tray_app, tmp_config):
+    tray_app.end_session()
+    tray_app.show_sidebar()
+    qtbot.mouseClick(tray_app.panel.start_session, Qt.MouseButton.LeftButton)
+    assert tray_app.picker.isVisible() and tray_app.picker.backdrop is not None  # the blurred sidebar behind
+    qtbot.keyClick(tray_app.picker, Qt.Key.Key_Escape)
+    assert not tray_app.picker.isVisible() and load_config(tmp_config)["paused"] is True  # nothing started
+    qtbot.mouseClick(tray_app.panel.start_session, Qt.MouseButton.LeftButton)
+    tray_app.window.hide()  # closing the sidebar cancels too
+    assert not tray_app.picker.isVisible() and load_config(tmp_config)["paused"] is True

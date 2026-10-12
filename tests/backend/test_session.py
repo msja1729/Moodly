@@ -578,3 +578,33 @@ def test_a_new_session_forgets_the_last_one(big_catalog, clock):
     assert s.start()
     now = client.player_state().item
     assert s.played_keys == {now.key} and not s.added_keys and not s.removed_ids and not s.pending
+
+
+def test_a_slow_session_step_never_holds_up_the_sidebar(tmp_config, big_catalog, clock):
+    # Live, steps run in the background: Spotify keeps being polled and a new song is shown at once,
+    # even while a step is still adding songs.
+    import threading
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    d, s = TestDaemonSessionMode().make_daemon(tmp_config, client, big_catalog, clock)
+    d.background_steps = True
+    release = threading.Event()
+    real_cycle = s.cycle
+
+    def slow_cycle(*args, **kwargs):
+        release.wait(5)
+        return real_cycle(*args, **kwargs)
+
+    async def run():
+        await d.apply_target("startup")
+        s.start()
+        s.cycle = slow_cycle
+        polls_before = client.calls
+        await d.run_for(30)  # a song change and timer steps happen; every step is stuck
+        assert client.calls - polls_before > 20  # polling went on regardless
+        state = json.loads(d.state_path.read_text(encoding="utf-8"))
+        assert state["track_name"] == client.player_state().item.name  # the song playing now is shown
+        release.set()
+        await asyncio.gather(*list(d._tasks))
+
+    asyncio.run(run())
+    d.shutdown()

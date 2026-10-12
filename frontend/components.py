@@ -37,9 +37,9 @@ from typing import Any, Mapping
 from PyQt6.QtCore import (QEasingCurve, QObject, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation,
                           pyqtSignal)
 from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
-                         QRadialGradient)
-from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel, QMenu, QSizePolicy,
-                             QVBoxLayout, QWidget)
+                         QPixmap, QRadialGradient)
+from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea,
+                             QSizePolicy, QVBoxLayout, QWidget)
 
 TEXT = "#F7F2F4"
 MUTED = "rgba(247, 242, 244, 175)"
@@ -264,6 +264,8 @@ class GlassRow(QAbstractButton):
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.isEnabled():
+            p.setOpacity(0.4)  # e.g. an empty playlist: shown, but can't be picked
         pill = self.pill()
         on = self.isChecked()
         h = self.hover
@@ -664,6 +666,158 @@ class Avatar(QWidget):
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.initial)
 
 
+
+# --------------------------------------------------------------------------- song-source popup
+
+SCROLL_QSS = """
+QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QScrollBar:vertical { width: 6px; background: transparent; margin: 2px; }
+QScrollBar::handle:vertical { background: rgba(255, 255, 255, 70); border-radius: 3px; min-height: 24px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { height: 0; background: none; }
+"""
+
+
+class SourcePicker(QWidget):
+    """Start / New session: "Where should songs come from?" A glass card over the blurred sidebar.
+
+    Picking an option emits `chosen(source)` and closes at once; Esc or a click outside the card cancels.
+    """
+
+    chosen = pyqtSignal(dict)
+    cancelled = pyqtSignal()
+    RADIUS = 24
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.hide()
+        self.setFont(ui_font())
+        self.setStyleSheet(BASE_QSS + SCROLL_QSS)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.backdrop: QPixmap | None = None
+        self.tint = QColor(DEFAULT_TINT)
+        self.reveal = 1.0
+        self._fade = fade(180, self._set_reveal, self)
+        self.rows: list[GlassRow] = []
+
+        self.card = QWidget(self)
+        card = QVBoxLayout(self.card)
+        card.setContentsMargins(4, 18, 4, 12)
+        card.setSpacing(2)
+        title = QLabel("Where should songs come from?")
+        title.setObjectName("Song")
+        title.setWordWrap(True)
+        note = QLabel("Pick one to start. You can change it later under Songs.")
+        note.setObjectName("Muted")
+        note.setWordWrap(True)
+        for w, bottom in ((title, 2), (note, 10)):
+            box = QHBoxLayout()
+            box.setContentsMargins(18, 0, 18, bottom)
+            box.addWidget(w)
+            card.addLayout(box)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list = QWidget()
+        self.list_layout = QVBoxLayout(self.list)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.list_layout.setSpacing(0)
+        self.scroll.setWidget(self.list)
+        card.addWidget(self.scroll)
+        self.cancel = GlassRow("×", "Cancel")
+        self.cancel.clicked.connect(self.dismiss)
+        card.addSpacing(4)
+        card.addWidget(self.cancel)
+
+    def open(self, options: list[dict], current, backdrop: QPixmap | None, tint: QColor) -> None:
+        """Show the options (dicts with glyph, text, source, enabled); `current` is ticked."""
+        self.backdrop, self.tint = backdrop, QColor(tint)
+        for row in self.rows:
+            self.list_layout.removeWidget(row)
+            row.deleteLater()
+        self.rows = []
+        for opt in options:
+            row = GlassRow(opt["glyph"], opt["text"])
+            row.set_accent(self.tint)
+            row.set_marked(bool(current and current(opt["source"])))
+            row.setEnabled(opt["enabled"])
+            row.clicked.connect(lambda _=False, s=opt["source"]: self._pick(s))
+            self.list_layout.addWidget(row)
+            self.rows.append(row)
+        self.list_layout.addStretch(1)
+        self.cancel.set_accent(self.tint)
+        self.setGeometry(self.parentWidget().rect())
+        self._layout_card()
+        self.show()
+        self.raise_()
+        self.setFocus()
+        self.reveal = 0.0
+        self._fade.stop()
+        self._fade.start()
+
+    def _layout_card(self) -> None:
+        w, h = self.width(), self.height()
+        rows_h = len(self.rows) * 35
+        card_h = min(h - 80, 18 + 70 + rows_h + 4 + 35 + 16)
+        self.card.setGeometry(14, max(40, (h - card_h) // 2), w - 28, card_h)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.isVisible():
+            self._layout_card()
+
+    def _set_reveal(self, value) -> None:
+        self.reveal = float(value)
+        self.update()
+
+    def _pick(self, source: dict) -> None:
+        self.hide()  # close at once; the session starts right after
+        self.chosen.emit(dict(source))
+
+    def dismiss(self) -> None:
+        if self.isVisible():
+            self.hide()
+            self.cancelled.emit()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.dismiss()
+        else:
+            super().keyPressEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if not self.card.geometry().contains(event.position().toPoint()):
+            self.dismiss()
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        outer = QPainterPath()
+        outer.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), self.RADIUS, self.RADIUS)
+        p.setClipPath(outer)
+        # The sidebar behind, blurred, fading in, under a dark veil.
+        if self.backdrop is not None:
+            p.setOpacity(self.reveal)
+            p.drawPixmap(self.rect(), self.backdrop)
+            p.setOpacity(1.0)
+        p.fillRect(self.rect(), QColor(14, 9, 16, round(120 * self.reveal)))
+        # The card: denser glass in the mood colour, with a bright edge.
+        r = QRectF(self.card.geometry())
+        g = QLinearGradient(r.topLeft(), r.bottomRight())
+        g.setColorAt(0, blend(QColor(40, 28, 40, 225), self.tint, 0.35))
+        g.setColorAt(1, blend(QColor(22, 15, 24, 235), self.tint, 0.18))
+        p.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        p.setBrush(g)
+        p.drawRoundedRect(r, 18, 18)
+        p.setPen(Qt.PenStyle.NoPen)
+        shine = QLinearGradient(r.topLeft(), QPointF(r.left(), r.top() + 60))
+        shine.setColorAt(0, QColor(255, 255, 255, 30))
+        shine.setColorAt(1, QColor(255, 255, 255, 0))
+        p.setBrush(shine)
+        p.drawRoundedRect(r, 18, 18)
+
 # --------------------------------------------------------------------------- the panel
 
 class SidebarPanel(QWidget):
@@ -880,6 +1034,22 @@ class SidebarPanel(QWidget):
             text, Qt.TextElideMode.ElideRight, width))
         self.source_row.setToolTip(f"Songs come from: {label}. Click to choose For you, Liked Songs or a playlist.")
 
+    def source_options(self) -> list[dict]:
+        """Where songs can come from: For you, Liked Songs, then the user's own playlists."""
+        opts = [{"glyph": "✦", "text": "For you  ·  new picks", "source": {"kind": "general"},
+                 "enabled": True}]
+        liked = f"Liked Songs  ·  {self._liked_count}" if self._liked_count is not None else "Liked Songs"
+        opts.append({"glyph": "♥", "text": liked, "source": {"kind": "liked"}, "enabled": self._liked_count != 0})
+        for pl in self._playlists:
+            name = pl["name"] if len(pl["name"]) <= 34 else pl["name"][:33] + "…"
+            opts.append({"glyph": "♫", "text": f"{name}  ·  {pl.get('count', 0)}",
+                         "source": {"kind": "playlist", "id": pl["id"], "name": pl["name"]},
+                         "enabled": pl.get("count", 0) > 0})
+        return opts
+
+    def is_current(self, source: dict) -> bool:
+        return source == self.source or (source["kind"] != "playlist" and source["kind"] == self.source["kind"])
+
     def source_menu(self) -> QMenu:
         """The picker: For you, Liked Songs, then the user's own playlists (the current one ticked)."""
         menu = QMenu(self)
@@ -889,23 +1059,16 @@ class SidebarPanel(QWidget):
         menu.setStyleSheet(MENU_QSS)
         menu.setFont(ui_font(10.5))
 
-        def add(text: str, source: dict, enabled: bool = True) -> None:
-            act = menu.addAction(text)
+        for i, opt in enumerate(self.source_options()):
+            if i == 2:
+                menu.addSeparator()
+            act = menu.addAction(opt["text"])
             act.setCheckable(True)
-            act.setChecked(source == self.source or (source["kind"] != "playlist" and source["kind"] == self.source["kind"]))
-            act.setEnabled(enabled)
-            act.triggered.connect(lambda _=False, s=source: self.songSourceSelected.emit(s))
-
-        add("For you  ·  taste, mood, languages", {"kind": "general"})
-        liked = f"Liked Songs  ·  {self._liked_count}" if self._liked_count is not None else "Liked Songs"
-        add(liked, {"kind": "liked"}, self._liked_count != 0)
-        menu.addSeparator()
-        if self._playlists:
-            for pl in self._playlists:
-                name = pl["name"] if len(pl["name"]) <= 34 else pl["name"][:33] + "…"
-                add(f"{name}  ·  {pl.get('count', 0)}", {"kind": "playlist", "id": pl["id"], "name": pl["name"]},
-                    pl.get("count", 0) > 0)
-        else:
+            act.setChecked(self.is_current(opt["source"]))
+            act.setEnabled(opt["enabled"])
+            act.triggered.connect(lambda _=False, s=opt["source"]: self.songSourceSelected.emit(s))
+        if not self._playlists:
+            menu.addSeparator()
             act = menu.addAction("Your playlists appear here")
             act.setEnabled(False)
         return menu

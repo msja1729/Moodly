@@ -46,10 +46,27 @@ def moods() -> dict:
 
 
 def handler_for(trace: Path):
+    cache: dict = {}  # the last answer, by the trace file's (mtime, size): parsed once per change
+
+    def trace_body() -> tuple[bytes, str]:
+        try:
+            st = trace.stat()
+            sig = f"{st.st_mtime_ns}-{st.st_size}"
+        except OSError:
+            sig = "none"
+        if cache.get("sig") != sig:
+            cache["sig"] = sig
+            cache["body"] = json.dumps({"events": read_events(trace), "moods": moods(), "file": str(trace)}).encode()
+        return cache["body"], sig
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path.startswith("/trace.json"):
-                body = json.dumps({"events": read_events(trace), "moods": moods(), "file": str(trace)}).encode()
+                body, sig = trace_body()
+                if self.headers.get("If-None-Match") == f'"{sig}"':
+                    self.send_response(304)  # nothing new: the page keeps what it has
+                    self.end_headers()
+                    return
                 kind = "application/json"
             elif self.path in ("/", "/index.html"):
                 body, kind = PAGE.encode("utf-8"), "text/html; charset=utf-8"
@@ -58,7 +75,9 @@ def handler_for(trace: Path):
                 return
             self.send_response(200)
             self.send_header("Content-Type", kind)
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "no-cache")
+            if self.path.startswith("/trace.json"):
+                self.send_header("ETag", f'"{sig}"')
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -424,7 +443,8 @@ function render() {
 
 async function poll() {
   try {
-    const r = await fetch("trace.json", {cache: "no-store"});
+    const r = await fetch("trace.json", {cache: "no-cache"});
+    if (r.status === 304) return;  // nothing new
     DATA = await r.json();
     const key = DATA.events.length + ":" + (DATA.events.length ? DATA.events[DATA.events.length - 1].t : "");
     if (key !== lastKey) { lastKey = key; render(); }

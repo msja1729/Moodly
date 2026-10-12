@@ -33,7 +33,7 @@ from PyQt6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplica
                          QPainter, QPainterPath, QPen, QPixmap, QRadialGradient)
 from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
-from frontend.components import DEFAULT_TINT, SidebarPanel, blend
+from frontend.components import DEFAULT_TINT, SidebarPanel, SourcePicker, blend
 from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, atomic_write_json,
                               ensure_app_home, load_config, resolve_path, set_paused, set_song_source,
                               set_target_mood, start_new_session)
@@ -96,6 +96,8 @@ class GlassWindow(QWidget):
         self._pointer.start(16)
 
     def hideEvent(self, event) -> None:
+        if getattr(self, "picker", None) is not None:
+            self.picker.dismiss()  # the sidebar closed: no session is started
         self._pointer.stop()
         self.waves.clear()
         self._last_wave = None
@@ -302,6 +304,11 @@ class MoodTrayApp:
         self.panel.logoutRequested.connect(self.log_out)
         self.panel.playerCommand.connect(self.player_command)
         self.panel.songSourceSelected.connect(self.select_source)
+        # Start / New session first asks where songs should come from.
+        self.picker = SourcePicker(self.window)
+        self.window.picker = self.picker
+        self.picker.chosen.connect(self._source_chosen)
+        self._pending_session: str | None = None  # "start" or "new" while the picker is open
         self.panel.set_account(account)
 
         self.tray = QSystemTrayIcon()
@@ -346,6 +353,7 @@ class MoodTrayApp:
         self._debounce = QTimer()
         self._debounce.setSingleShot(True)
         self._debounce.timeout.connect(self.refresh)
+        self._seen_state = None  # (mtime_ns, size) of state.json last shown
         self._state_touched()
 
     # ----------------------------------------------------------- actions
@@ -373,7 +381,23 @@ class MoodTrayApp:
 
     # A session = the daemon managing the music. config "paused" = no session; "session_seq" = new session.
     def start_session(self) -> None:
-        self.cfg = set_paused(False, self.config_path)
+        """Start session: ask where songs should come from; the choice starts it."""
+        self._ask_source("start")
+
+    def _ask_source(self, action: str) -> None:
+        self._pending_session = action
+        backdrop = blur_pixmap(self.window.grab()) if self.window.isVisible() else None
+        self.picker.open(self.panel.source_options(), self.panel.is_current, backdrop, self.panel.tint)
+
+    def _source_chosen(self, source: dict) -> None:
+        action, self._pending_session = self._pending_session, None
+        self.cfg = set_song_source(source, self.config_path)
+        if action == "new":
+            self.cfg = start_new_session(self.config_path)
+        else:
+            self.cfg = set_paused(False, self.config_path)
+        log.info("session %s with songs from %s", "restarted" if action == "new" else "started",
+                 source.get("name") or source.get("kind"))
         self.refresh(reload=False)
 
     def end_session(self) -> None:
@@ -381,8 +405,8 @@ class MoodTrayApp:
         self.refresh(reload=False)
 
     def new_session(self) -> None:
-        self.cfg = start_new_session(self.config_path)
-        self.refresh(reload=False)
+        """New session: ask where songs should come from; the choice ends this session and starts one."""
+        self._ask_source("new")
 
     def log_out(self) -> None:
         """Forget the active Spotify account, then let the user choose another one."""
@@ -429,11 +453,21 @@ class MoodTrayApp:
         self.window.activateWindow()
 
     # ----------------------------------------------------------- state
+    def _state_signature(self):
+        try:
+            st = self.state_path.stat()
+            return st.st_mtime_ns, st.st_size
+        except OSError:
+            return None
+
     def _state_touched(self, _path: str = "") -> None:
-        """The daemon wrote new state: show it right away (several events per write are merged)."""
+        """The daemon wrote new state: show it right away (several events per write are merged).
+        The data folder also holds the logs and databases, which change all the time: those are ignored."""
         if self.state_path.exists() and str(self.state_path) not in self.watcher.files():
             self.watcher.addPath(str(self.state_path))  # re-arm: an atomic replace drops the old watch
-        self._debounce.start(30)
+        if self._state_signature() == self._seen_state:
+            return
+        self._debounce.start(10)
 
     def read_state(self) -> dict | None:
         try:
@@ -445,6 +479,7 @@ class MoodTrayApp:
         return state if time.time() - state.get("updated", 0) < 300 else None
 
     def refresh(self, reload: bool = True) -> None:
+        self._seen_state = self._state_signature()
         if self.daemon is not None:
             self.daemon.check()
         if reload:

@@ -119,6 +119,9 @@ class Daemon:
         self.liked_count: int | None = None
         self._next_playlists = self.clock.now()
         self._playlists_task: asyncio.Task | None = None
+        # Live: session steps run as background tasks, so Spotify keeps being polled (and the sidebar
+        # updated) while a step adds songs. Tests run them inline for determinism.
+        self.background_steps = False
 
     # ------------------------------------------------------------- target mood
     async def apply_target(self, reason: str) -> None:
@@ -203,8 +206,22 @@ class Daemon:
                 log.info("now playing %s - %s | mood %s | target %s",
                          ev.track.artists, ev.track.name,
                          f"({mood[0]:.2f}, {mood[1]:.2f})" if mood else "unknown", self.target_mood)
+        if new_track:
+            self.write_state()  # show the new song now, before the (slower) session step
         if new_track and not self.paused:
-            await self._audio_step("track_change")
+            if self.background_steps:
+                self._spawn(self._audio_step("track_change"))
+            else:
+                await self._audio_step("track_change")
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.ensure_future(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _session_step_and_show(self, reason: str) -> None:
+        await self._session_step(reason)
+        self.write_state()
 
     async def _audio_step(self, reason: str) -> None:
         if self.session is None:
@@ -244,6 +261,8 @@ class Daemon:
         self._next_cycle = self.clock.now() + s.params.cycle_s
         if s.last_added:
             self.last_bridge = s.last_added[-1]
+        if self.background_steps:
+            self.write_state()
 
     async def end_session(self) -> None:
         """End the session (hand the next songs back, delete the playlist) and clear the song pool."""
@@ -316,7 +335,10 @@ class Daemon:
             s.preparing = False
             self._apply_rec()  # the refresh may have finished a moment ago: hand its pool over first
             log.info("%d useful songs ready after %.0fs; the session starts adding songs", useful, waited)
-            await self._session_step("ready")
+            if self.background_steps:
+                self._spawn(self._session_step_and_show("ready"))
+            else:
+                await self._session_step("ready")
 
     def _start_rec_refresh(self) -> bool:
         """Refresh the song pool in a background thread (a minute or two; playback goes on). True if started."""
@@ -452,9 +474,13 @@ class Daemon:
                 self.write_state()
                 next_poll = self.clock.now() + result.delay_s
             if self.session is not None and not self.paused and self.clock.now() >= self._next_cycle:
-                await self._session_step("timer")
-                self._next_cycle = max(self._next_cycle, self.clock.now() + 1.0)
-                self.write_state()
+                if not self.background_steps:
+                    await self._session_step("timer")
+                    self._next_cycle = max(self._next_cycle, self.clock.now() + 1.0)
+                    self.write_state()
+                elif not self._session_lock.locked():
+                    self._next_cycle = self.clock.now() + self.session.params.cycle_s  # the step sets it again
+                    self._spawn(self._session_step_and_show("timer"))
             if now >= next_display:
                 if await asyncio.to_thread(self.display.step) is not None:
                     self.write_state()
@@ -523,10 +549,16 @@ class Daemon:
         if action is None:
             return
         log.info("player: %s", cmd)
-        try:
-            await asyncio.to_thread(action)
-        except Exception as e:
-            log.warning("could not %s: %s", cmd, e)
+        for attempt in (1, 2):
+            try:
+                await asyncio.to_thread(action)
+                break
+            except Exception as e:
+                # Right after the session reloads the playlist, Spotify can briefly report no device (404).
+                if attempt == 1 and "404" in str(e):
+                    await self.clock.sleep(0.7)
+                    continue
+                log.warning("could not %s: %s", cmd, e)
         # Spotify takes a moment to report the change; look twice so the sidebar follows at once.
         for wait in (0.25, 0.6):
             await self.clock.sleep(wait)
@@ -729,6 +761,7 @@ async def amain(args: argparse.Namespace) -> None:
     if stop_file is not None or args.parent_pid:
         watch_for_stop(asyncio.get_running_loop(), asyncio.current_task(), stop_file, args.parent_pid)
     daemon = await asyncio.to_thread(build_daemon, args)
+    daemon.background_steps = True
     try:
         daemon.start_watcher()
         await daemon.apply_target("startup")
