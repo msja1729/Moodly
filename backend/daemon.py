@@ -192,6 +192,8 @@ class Daemon:
         for ev in result.events:
             if isinstance(ev, TrackChanged):
                 source = self.session if self.session is not None else self.audio
+                if self.session is not None:
+                    self.session.note_ended(ev.track.name, ev.track.artists, ev.skipped)
                 itype, direction = source.take_intervention(ev.track.id)
                 self.feedback.log_event(self.clock.now(), self.mood, itype, ev.skipped,
                                         ev.track.id, direction)

@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M29 · Only songs from the chosen source; End session really leaves the playlist (at the end, after the summary).
+**Latest:** M30 · Picks climb toward the target; a steadier mood (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M28)
+## Summary of earlier modifications (M1–M29)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -38,38 +38,36 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M26 | 10-12 | **Good songs no longer removed; the mood is what you listen to** | Mass removals (relinked ids made the playlist look like the user's own queue, so every song was a "duplicate"); far-from-target-only removals after a new target; the mood counted Moodly's unplayed picks. | Songs matched by title + artists; misread-queue guard; one removal rule (far from both); mood = the song playing + the user's own songs; the planner steps from where the queue is heading. 248 tests. |
 | M27 | 10-12 | **Songs no longer cut a second after they start; each session starts fresh** | After adding songs, the reload "at position N" started the next song (Spotify counts an entry its API doesn't list); a new session remembered the last one's played/added songs. | Reload at the song itself (`offset.uri`), looked up again after the edits; per-session reset. 250 tests. |
 | M28 | 10-12 | **No more lag; popup for where songs come from** | The sidebar/dashboard showed changes late: the backend ran the whole session step before writing the new song, and didn't poll meanwhile. | New song written at once; session steps in the background; refresh only on real state changes; dashboard ETag; Pause/Play retry; Start/New session popup over the blurred sidebar. 252 tests. |
+| M29 | 10-12 | **Only songs from the chosen source; End session leaves the playlist** | Old hand-backs piled up in the user's queue and came back each session; Spotify kept playing the deleted playlist. | A playlist / Liked Songs session starts fresh (the song playing + 2 from the source, no queue, no catalog); End session plays the same song and the next 10 as a plain list. 253 tests. |
 
 ---
 
-## M29 · Only songs from the chosen source; End session really leaves the playlist · 2026-10-12 · `🆕 LATEST`
+## M30 · Picks climb toward the target; a steadier mood · 2026-10-12 · `🆕 LATEST`
 
-**Problems:**
-1. **Songs from outside the chosen source.** With Liked Songs picked, the session playlist held songs like *Mehabooba*, *Tu Aake Dekhle* and *Jo Tum Mere Ho*. Causes:
-   - At Start session the user's Spotify queue was moved in.
-   - Each End session added the next 10 songs to that queue (`add_to_queue`), so old sessions' songs piled up there and came back at every start.
-   - While a playlist pool was being read, gaps could be filled from the catalog.
-2. **"Next from: Ambient Mood session" after End session.** The playlist was deleted (unfollowed), but Spotify went on playing its own copy of it.
+**Question:** "Why is it picking songs that pull away?" (dashboard, Liked Songs → Energized, 34% of the way)
 
-**Wanted:** a session started with a chosen source starts fresh and adds only from it. "For you" stays as it is.
+**What the trace showed (15:58–16:11):**
+1. **One-step refill.** The fresh session (M29) had only 2 songs ahead, so the first step filled **11 songs at once around one waypoint**, (0.35, 0.55).
+   - The mood was low then, (0.35, 0.28), so all 11 really were closer to the target than the mood.
+   - Once the mood rose to about (0.43, 0.50), the dashboard (which compares with the current mood) showed them as "pulls away".
+   - The queue was a plateau at step 1, not a climb.
+2. **A one-song mood.** In a fresh session nothing ahead is the user's own, so the mood was **only the song playing**.
+   - *Chennai Express – Sad Theme* (still in Spotify's own queue from earlier hand-backs) made it (0.41, **0.03**).
+   - The next picks aimed low again (*Chitti*, *Emai Pothane*).
+3. **Long waits on timeouts.** Spotify timed out from 16:00 to 16:02, and polling backed off to 24 s between tries.
 
 **Modifications:**
-1. **End session moves off the playlist** (`PlaylistSession.end`, new `play_uris()` on both clients):
-   - Spotify plays the same song at the same moment, then the next 10 songs as a plain list (no context).
-   - "Next from: Ambient Mood session" disappears, and nothing is added to the user's queue.
-   - If Spotify was paused, it is paused again. Then the playlist is deleted, as before.
-2. **Fresh start with a playlist / Liked Songs** (`Daemon._prepare_start`, `Recommender.source_seed`):
-   - The session playlist starts with only the song playing plus 2 random songs from the source, to keep the music going while the pool is read.
-   - Spotify's queue is not moved in (`move_queue_in = False`), and the seed songs count as Moodly's picks for the mood.
-   - "For you" moves the user's queue in, as before.
-3. **No catalog fill-ins for a playlist source:** `_begin_preparing` gives the session the source's pool (no language filter, no fallback, repeats allowed) at once, before the first step.
-4. Docs: SPEC (fresh start, end), MANUAL (`handback_count`), README, the End session tooltip.
+1. **Staircase refills** (`plan_cycle`): when more than `max_adds_per_cycle` songs are needed and the mood isn't settled:
+   - It walks the Markov chain: `picks_per_step` = 2 songs per step, near that step's waypoint, appended in order.
+   - Each step's songs must be closer to the target than the previous step.
+   - `CyclePlan.waypoints` keeps every step (also in the trace), and the session's "picks far from the waypoint" check uses each song's own step.
+2. **Stricter picks:** every pick must be closer to the target than **both** the mood and where the queue is heading (`ahead`). Before, it was only the mood, which can be low for a moment.
+3. **A steadier mood:** the last `heard_songs` = 3 songs the user listened to (not skipped) also count (`PlaylistSession.heard`, `note_ended()` from the daemon). So one song can't swing it. They're reset per session.
+4. **Timeouts:** after errors, the next poll comes within 5 s (`max_backoff_s` 600 → 5). A 429 still waits as Spotify says.
+5. Docs: SPEC (mood, staircase).
 
-**Tests:** 253 pass.
-- New:
-  - a Liked Songs session starts with the song playing and 2 Liked Songs, not the user's queue
-- Updated:
-  - End session leaves the playlist: the same song keeps playing, then the next 5, with nothing queued
-
-**Limits:**
-- Songs the user added to Spotify's own queue ("Add to queue") still play first. Spotify gives apps no way to clear that queue.
-- Songs handed back to the queue by earlier versions are still there. Spotify's "Clear queue" removes them, once.
+**Tests:** 257 pass. New:
+- a big refill climbs step by step (appended in order, later songs closer)
+- heard songs count in the mood
+- only songs listened to (not skipped) count as heard
+- polls come within 5 s after timeouts

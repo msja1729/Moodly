@@ -635,3 +635,19 @@ def test_playlist_session_starts_fresh_without_the_users_queue(tmp_config, big_c
         assert entries == [songs[0]] + liked[:2]  # the song playing + 2 from Liked Songs; not the user's queue
 
     asyncio.run(run())
+
+
+
+def test_only_songs_the_user_listened_to_count_as_heard(big_catalog, clock):
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    s.cycle(FOCUSED)
+    first, second = big_catalog[songs[0]][0], big_catalog[songs[1]][0]
+    s.note_ended(first.name, first.artists, skipped=True)
+    assert not s.heard  # a skip doesn't count
+    s.note_ended(first.name, first.artists, skipped=False)
+    assert list(s.heard) == [big_catalog[songs[0]][1].point]
+    s.note_started(songs[1], second.name, second.artists)
+    pts = [big_catalog[songs[0]][1].point] + [big_catalog[t][1].point for t in songs[1:]]
+    assert s.mood == pytest.approx((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))

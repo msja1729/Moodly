@@ -63,6 +63,7 @@ class MoodTrace:
             settled=bool(plan.settled), preparing=preparing, needs_more_songs=needs_more_songs,
             queue_size=queue_size,
             ahead=_pt(getattr(plan, "ahead", None)),
+            waypoints=[_pt(w) for w in getattr(plan, "waypoints", []) or []],
             window=[{"name": w.name, "artists": w.artists, "point": _pt(w.point),
                      "removable": w.removable, "ours": w.ours} for w in window],
             added=added, removed=removed)

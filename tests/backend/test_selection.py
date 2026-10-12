@@ -226,6 +226,17 @@ class TestPlanCycle:
         assert len(plan.insertions) == P.target_length - 1
         assert plan.mood == pytest.approx((0.9, 0.9))
 
+    def test_a_big_refill_climbs_toward_the_target_step_by_step(self):
+        # A fresh session: almost nothing queued. The refill is a staircase, not many songs around one step.
+        items = [item(0.9, 0.9, "now"), item(0.9, 0.9, "next")]
+        plan = plan_cycle(items, grid_table(), TARGET, self.chain(), np.random.default_rng(0), P, set())
+        picks = [t for _, t in plan.insertions]
+        assert all(p is None for p, _ in plan.insertions)  # appended in order
+        assert len(plan.waypoints) >= 3  # several steps
+        gaps = [distance(t.point, TARGET) for t in picks]
+        steps = [max(gaps[i:i + P.picks_per_step]) for i in range(0, len(gaps), P.picks_per_step)]
+        assert steps[-1] < steps[0] and gaps[0] < distance(plan.mood, TARGET)  # each pick helps, later ones more
+
     def test_off_target_adds_a_few_toward_the_target(self):
         items = [item(0.9, 0.9, f"s{i}") for i in range(12)]
         plan = plan_cycle(items, grid_table(), TARGET, self.chain(), np.random.default_rng(0), P, set())
@@ -261,3 +272,10 @@ def test_listening_mood_counts_the_song_playing_and_the_users_songs_once():
     pick = WindowItem("spotify:track:c", "C", "x", feats(0.9, 0.9), ours=True)  # not played yet: doesn't
     assert listening_mood([now, mine, again, pick]) == pytest.approx((0.3, 0.3))
     assert queue_mood([now, mine, again, pick]) == pytest.approx((0.475, 0.475))  # the queue's heading
+
+
+
+def test_heard_songs_count_in_the_mood():
+    from backend.selection import listening_mood
+    now = WindowItem("spotify:track:a", "A", "x", feats(0.9, 0.9))
+    assert listening_mood([now], heard=[(0.1, 0.1), (0.2, 0.2)]) == pytest.approx((0.4, 0.4))

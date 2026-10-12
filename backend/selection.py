@@ -66,6 +66,7 @@ class SelectionParams:
     allow_explicit: bool = True
     insert_mode: str = "random"       # "random": random positions in the middle; "path": m -> t order + cheapest gap
     max_removals_on_retarget: int = 5  # a new target clears up to this many songs far from it
+    picks_per_step: int = 2           # a big refill climbs toward the target this many songs per Markov step
 
     @classmethod
     def from_config(cls, cfg: Mapping) -> "SelectionParams":
@@ -112,12 +113,14 @@ def queue_mood(items: Sequence[WindowItem], window_size: int | None = None) -> P
     return (float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts])))
 
 
-def listening_mood(items: Sequence[WindowItem], window_size: int | None = None) -> Point | None:
-    """The mood: what the user is actually listening to. The song playing (whoever picked it) plus the
-    user's own songs ahead: their queue, or the playlist they were playing. Moodly's picks still ahead
-    don't count until they play. Each song once (Spotify can list a song twice)."""
+def listening_mood(items: Sequence[WindowItem], window_size: int | None = None,
+                   heard: Sequence[Point] = ()) -> Point | None:
+    """The mood: what the user is actually listening to. The last few songs they heard (`heard`, not
+    skipped), the song playing (whoever picked it), and the user's own songs ahead: their queue, or the
+    playlist they were playing. Moodly's picks still ahead don't count until they play. Each song once
+    (Spotify can list a song twice)."""
     seen: set[str] = set()
-    pts = []
+    pts = list(heard)
     for i, it in enumerate(items):
         if (i > 0 and it.ours) or it.key in seen:
             continue
@@ -404,6 +407,7 @@ class CyclePlan:
     deviation: float | None
     waypoint: Point | None = None
     ahead: Point | None = None         # where the whole queue, Moodly's picks included, is heading
+    waypoints: list = field(default_factory=list)  # every step of a staircase refill (first = waypoint)
     direction: Direction | None = None
     settled: bool = False
     removals: list[int] = field(default_factory=list)                 # indices into the window
@@ -412,13 +416,14 @@ class CyclePlan:
 
 def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, chain: MoodChain,
                rng: np.random.Generator, params: SelectionParams, exclude_ids: set[str],
-               retarget: bool = False, languages: frozenset[str] | None = None) -> CyclePlan:
+               retarget: bool = False, languages: frozenset[str] | None = None,
+               heard: Sequence[Point] = ()) -> CyclePlan:
     """Decide one reshaping step for the window (now playing first).
 
     `retarget`: the user just picked a new target, so songs far from it are cleared out.
     """
     ahead = queue_mood(items, params.window_size)
-    mood = listening_mood(items, params.window_size) or ahead
+    mood = listening_mood(items, params.window_size, heard) or ahead
     if mood is None:
         return CyclePlan(None, None)
     dev = distance(mood, target)
@@ -450,12 +455,41 @@ def plan_cycle(items: Sequence[WindowItem], table: TrackTable, target: Point, ch
     else:
         # Step on from where the queue is heading, so each new pick goes one step further.
         plan.waypoint, plan.direction = chain.next_waypoint(ahead or mood, rng)
+    plan.waypoints = [plan.waypoint]
     context = MusicalContext.of(kept)
     window_ids = {it.track_id for it in items if it.track_id}
-    idx, scores = rank_candidates(table, plan.waypoint, mood, target, context, exclude_ids | window_ids,
-                                  params, settled, languages)
     # Don't repeat the artists of the songs right around the insertion area.
     window_artists = {main_artist(it.artists) for it in kept[1: params.protect_head + 4] if it.artists}
+    # Every pick must be closer to the target than both the mood and where the queue is heading.
+    ref = min((p for p in (mood, ahead) if p is not None), key=lambda p: distance(p, target))
+
+    if k > params.max_adds_per_cycle and not settled:
+        # A big refill (e.g. a fresh session with an empty queue): a staircase toward the target, a few
+        # songs per Markov step, played in that order, instead of many songs around one step.
+        picks: list[CatalogTrack] = []
+        taken: set[str] = set()
+        wp, step_ref, avoid = plan.waypoint, ref, set(window_artists)
+        while len(picks) < k:
+            near = distance(wp, target) <= params.settle_radius
+            idx, scores = rank_candidates(table, wp, step_ref, target, context,
+                                          exclude_ids | window_ids | taken, params, near, languages)
+            step = mmr_select(table, idx, scores, min(params.picks_per_step, k - len(picks)),
+                              params.mmr_lambda, avoid)
+            if not step:
+                break
+            picks += step
+            taken |= {c.id for c in step}
+            avoid = set(window_artists) | {main_artist(c.artists) for c in step if c.artists}
+            if distance(wp, target) < distance(step_ref, target):
+                step_ref = wp  # the next step's songs must be closer still
+            if not near:
+                wp, _ = chain.next_waypoint(wp, rng)
+                plan.waypoints.append(wp)
+        plan.insertions = [(None, c) for c in picks]  # appended in order: the queue climbs step by step
+        return plan
+
+    idx, scores = rank_candidates(table, plan.waypoint, ref, target, context, exclude_ids | window_ids,
+                                  params, settled, languages)
     picks = mmr_select(table, idx, scores, k, params.mmr_lambda, window_artists)
     if params.insert_mode == "path":
         plan.insertions = plan_insertions(kept, picks, mood, target, params)

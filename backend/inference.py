@@ -33,7 +33,7 @@ class InferenceParams:
     skip_threshold: float = 0.8
     poll_min_s: float = 0.75    # while music plays: the sidebar shows a skip or a new song within this
     poll_max_s: float = 2.0     # paused / nothing playing
-    max_backoff_s: float = 600.0
+    max_backoff_s: float = 5.0      # after errors (e.g. Spotify timing out); a 429 still waits as told
 
     @classmethod
     def from_config(cls, cfg: Mapping) -> "InferenceParams":

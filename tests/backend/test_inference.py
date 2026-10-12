@@ -344,3 +344,18 @@ def test_state_written_at_once_when_it_changes_else_every_10s(tmp_config, catalo
     clock.advance(11)
     daemon.write_state()                  # unchanged but 10 s passed: written (keeps "updated" fresh)
     assert path.exists() and first
+
+
+
+def test_after_timeouts_the_next_poll_comes_within_5_seconds(clock):
+    import asyncio
+    from backend.features import FeatureChain
+    from backend.inference import InferenceEngine
+
+    class Slow:
+        def current_playback(self):
+            raise ConnectionError("Read timed out")
+
+    eng = InferenceEngine(Slow(), FeatureChain([]), clock)
+    delays = [asyncio.run(eng.poll()).delay_s for _ in range(8)]
+    assert max(delays) <= 5.0

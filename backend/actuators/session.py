@@ -79,6 +79,7 @@ class SessionParams:
     replay_after: int = 10           # ...unless the catalog runs dry; then only the last 10 are excluded
     pool_max_jump: float = 0.3       # pool picks further than this (on average) from the waypoint: add nothing
     max_manual_overlap: int = 3      # more "own queue" songs than this also in the playlist = a misread queue
+    heard_songs: int = 3             # the last songs the user heard (not skipped) also count in the mood
     prepare_min_upcoming: int = 2    # while preparing, songs added only to keep this many ahead
 
     @classmethod
@@ -148,6 +149,7 @@ class PlaylistSession:
         # (the song playing + `seed_items` from the source), without moving Spotify's queue in.
         self.move_queue_in = True
         self.seed_items: list[Item] = []
+        self.heard: deque[Point] = deque(maxlen=params.heard_songs)  # last songs the user heard (not skipped)
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
@@ -304,6 +306,7 @@ class PlaylistSession:
         self.played_ids, self.played_keys = {ps.item.id}, {ps.item.key}
         self.added_keys, self.removed_ids, self.pending = {it.key for it in self.seed_items}, set(), {}
         self._window_points, self.source_dry = [], False
+        self.heard.clear()
         self.last_added, self.last_removed = [], []
         self.status = MANAGING
         log.info("session started: %d songs moved into '%s'", len(items), SESSION_NAME)
@@ -419,17 +422,17 @@ class PlaylistSession:
         retarget = reason in ("start", "target_change", "ready")
         if self.preparing:
             # The pool is being filled: only measure the mood (the daemon decides when it's ready).
-            mood = listening_mood(window, self.selection.window_size)
+            mood = listening_mood(window, self.selection.window_size, self.heard)
             plan = CyclePlan(mood, distance(mood, target) if mood is not None else None,
                              ahead=queue_mood(window, self.selection.window_size))
         else:
             plan = plan_cycle(window, self.table, target, chain, self.rng, self.selection, exclude, retarget,
-                              self.languages)
+                              self.languages, self.heard)
             if plan.waypoint is not None and self._poor(plan):
                 # Small pools run out of unplayed songs near the target: allow older repeats.
                 relaxed = self.removed_ids | set(list(self.recent)[-self.params.replay_after:])
                 retry = plan_cycle(window, self.table, target, chain, self.rng, self.selection, relaxed, retarget,
-                                   self.languages)
+                                   self.languages, self.heard)
                 if not self._poor(retry) or len(retry.insertions) > len(plan.insertions):
                     plan = retry
             if (self.fallback_table is not None and plan.waypoint is not None
@@ -555,7 +558,8 @@ class PlaylistSession:
         if not plan.insertions:
             return True
         far = far or 2 * self.selection.search_radius
-        dists = [math.dist(t.point, plan.waypoint) for _, t in plan.insertions]
+        steps = plan.waypoints or [plan.waypoint]  # a staircase refill: each song is near its own step
+        dists = [min(math.dist(t.point, w) for w in steps) for _, t in plan.insertions]
         return (sum(dists) / len(dists) if average else max(dists)) > far
 
     def _emergency_fill(self, window: list[WindowItem], target: Point, exclude: set[str],
@@ -598,7 +602,7 @@ class PlaylistSession:
         if key not in keys:
             return
         self._window_points = self._window_points[keys.index(key):]
-        seen, pts = set(), []
+        seen, pts = set(), list(self.heard)
         for i, (k, p, ours) in enumerate(self._window_points):
             if (i > 0 and ours) or k in seen:
                 continue
@@ -611,6 +615,15 @@ class PlaylistSession:
             self.mood = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
         if self.trace is not None:
             self.trace.song(self._window_names.get(key, key), self._window_points[0][1], self.mood, self._target)
+
+    def note_ended(self, name: str, artists: str, skipped: bool) -> None:
+        """A song ended: if the user listened to it (not a skip), it counts in the mood for a while."""
+        if not self.active or skipped:
+            return
+        key = song_key(name, artists)
+        point = next((p for k, p, _ in self._window_points if k == key), None)
+        if point is not None:
+            self.heard.append(point)
 
     def take_intervention(self, ended_track_id: str) -> tuple[str, Direction | None]:
         direction = self.pending.pop(ended_track_id, None)
