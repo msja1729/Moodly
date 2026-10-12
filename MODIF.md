@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M22 · Player controls, album cover, sync under 1 s, a simpler mood path view (at the end, after the summary).
+**Latest:** M23 · Release 0.3.0 for Windows and Mac (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M21)
+## Summary of earlier modifications (M1–M22)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -31,46 +31,23 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M19 | 10-12 | **Pointer effects** | The sidebar should react to the mouse like modern websites. | A light in the mood colour followed the pointer and the edge shone near it; rows: hover pill fade, inner light, icon nudge, click ripple; the selection slides between moods; mood map crosshair readout and breathing dot. 232 tests. |
 | M20 | 10-12 | **Waves instead of the pointer light, bolder text, no crosshair or window dots** | The pointer light was too bright and hid the text; the text should be bolder; the map crosshair and window dots weren't wanted. | Soft waves behind the text when the pointer moves (one per 38 px, fade over 1.6 s); `ui_font()` with heavier weights; crosshair, readout and window dots removed. 232 tests. |
 | M21 | 10-12 | **Mood path trace and live plot (testing)** | Wanted to see the mood move toward the target while listening. | Opt-in trace (`AMBIENT_MOOD_TRACE`) of every cycle/song change; a local web viewer (`tools/mood_trace_view.py`) plots it live. 233 tests. |
+| M22 | 10-12 | **Player controls, album cover, sync under 1 s, simpler mood path view** | The mood path page was hard to read; the sidebar lacked a cover and player buttons; sync took up to 3 s. | Cover art, Play/Pause and Next (sidebar → `data/player.cmd` → daemon → Spotify), a time readout, a small mood map at the side; polling 0.75 s / 2 s; the mood path page rewritten around "right now", "up next" and what Moodly did. 237 tests. |
 
 ---
 
-## M22 · Player controls, album cover, sync under 1 s, a simpler mood path view · 2026-10-12 · `🆕 LATEST`
+## M23 · Release 0.3.0 for Windows and Mac · 2026-10-12 · `🆕 LATEST`
 
-**Request:**
-1. The mood path page was too detailed: it was hard to see which songs were picked and where the music is now.
-2. In the sidebar, show the song's cover and Play/Pause and Next buttons, with the mood map small and to the side. Keep the design and colours.
-3. Get the sidebar in sync in under 1 s (it was up to 3 s).
+**Request:** merge the frontend and backend changes into `main` and publish a release for Windows and Mac.
 
 **Modifications:**
-1. **Sidebar Now Playing** (`frontend/components.py`):
-   - `CoverArt`: the album cover, 64 px with rounded corners. It cross-fades (320 ms) on a song change; a tinted glass placeholder with ♪ shows when there's no cover.
-   - `CoverLoader`: downloads covers in a background thread and keeps the last 24.
-   - `MediaButton`: drawn icons (not font glyphs). Play/Pause is a solid white circle and Next is a glass circle; both shrink a little when pressed and are disabled when nothing plays.
-   - A time readout next to the progress bar (1:23 / 4:49).
-   - The mood map is now 96×72 px beside the status line, with no axis labels (they're in its tooltip).
-2. **Player controls** (sidebar → daemon → Spotify):
-   - A click writes `data/player.cmd` (`{"cmd": "play" | "pause" | "next"}`).
-   - The daemon watches that folder, runs the command (`pause()` / `resume()` / `next_track()` on the client), then polls Spotify twice (after 0.25 s and 0.6 s) and writes the state at once.
-   - The sidebar flips the button and freezes or restarts the bar immediately. An older state that arrives before Spotify confirms doesn't undo the click (for up to 3 s).
-   - A stale command left over from before the daemon started is deleted.
-3. **Cover URL** (`backend/spotify/client.py`): `Track.image` is the album image closest to 300 px. It isn't part of the track's identity. The state now includes `track_image`.
-4. **Sync:** the daemon polls every 0.75 s while music plays (was 3 s) and every 2 s when paused (was 15 s), so a change shows in the sidebar within about a second.
-5. **Mood path page** (`tools/mood_trace_view.py`), rewritten for reading at a glance:
-   - **Right now:** a plain sentence ("Almost there. Your music is 0.08 away from Energized."), the song playing, the mood, the target, how the mood moved since the target was set, and a "% of the way" bar.
-   - **Up next:** the next 8 songs in order, each tagged *picked by Moodly* or *your queue*, with its point and whether it pulls toward the target.
-   - **Map:** "You are here", the target, one path line, the song playing now (named), and the next 6 songs as numbered dots (green = Moodly picked it).
-   - **What Moodly did:** a plain-language feed ("Aimed one step happier and more energetic and added: …"); removals fold away.
-   - **Show details:** brings back waypoints, every pick, the grid, and the valence/energy chart.
-   - Fixes: progress is measured from when the current target was set (was −771%), and picks are matched ignoring capitals. The page refreshes every second.
-6. **Docs:** SPEC (Now Playing, player, sync, performance), MANUAL (sketch, table, poll settings), `docs/sidebar-player.png`.
-
-**Tests:** 237 pass. New:
-- the buttons write the command; the button changes at once; a stale state doesn't undo it; Next
-- the cover shows the downloaded image and falls back to the placeholder
-- the daemon handles pause, play and next (the mock records a skip) and deletes the command
-- the cover URL picks the 300 px image
-- poll delays 0.75 s / 2 s
+1. `dev` (M17–M22) merged into `main`.
+2. Release `v0.3.0` on GitHub with plain-language notes:
+   - the glass sidebar that follows the mood, with waves behind the text
+   - album cover, Play/Pause and Next, and a small mood map
+   - sync within a second
+3. Windows installer `AmbientMood-Setup-0.3.0.exe` built locally (`packaging/build.ps1 -Version 0.3.0`).
+4. The Mac `.dmg` files (Apple silicon and Intel) are built by the `release-mac.yml` workflow when the release is published.
+5. The developer-only mood trace (M21) is in the code but stays off unless `AMBIENT_MOOD_TRACE` is set. The viewer (`tools/`) isn't part of the installers.
 
 **Not done / limits:**
-- About 80 Spotify requests a minute while playing. Spotify slows the app down if it asks too often (429); the app already waits as told when that happens.
-- Covers need internet; offline, the placeholder shows.
+- The Repeat issue seen in testing is still open: with Spotify's Repeat on, the session can remove its own songs, and the mood briefly reads from one song.
