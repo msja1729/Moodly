@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M26 · Good songs no longer removed; the mood is what you listen to (at the end, after the summary).
+**Latest:** M27 · Songs no longer cut a second after they start; each session starts fresh (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M25)
+## Summary of earlier modifications (M1–M26)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -35,49 +35,33 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M23 | 10-12 | **Release 0.3.0 for Windows and Mac** | The new frontend and backend were only on `dev`. | `dev` merged into `main`; `v0.3.0` published with the Windows installer and both Mac `.dmg` files and plain-language notes (including "turn off Repeat"). |
 | M24 | 10-12 | **A link to the mood path dashboard (dev only)** | Opening the dashboard took a separate command. | `tools/dev_dashboard.ps1`/`.sh` run the app with the trace; the app serves the dashboard and shows a link in the sidebar and tray menu. Never in the installed app; `dev` only. 238 tests. |
 | M25 | 10-12 | **Songs from one of your playlists or Liked Songs** | Users wanted songs from a playlist of theirs, not only the general search. | A "Songs:" picker (For you / Liked Songs / own playlists); a playlist pool has no language filter, no top-up, repeats allowed, ready once read; "no songs closer" note. 242 tests. |
+| M26 | 10-12 | **Good songs no longer removed; the mood is what you listen to** | Mass removals (relinked ids made the playlist look like the user's own queue, so every song was a "duplicate"); far-from-target-only removals after a new target; the mood counted Moodly's unplayed picks. | Songs matched by title + artists; misread-queue guard; one removal rule (far from both); mood = the song playing + the user's own songs; the planner steps from where the queue is heading. 248 tests. |
 
 ---
 
-## M26 · Good songs no longer removed; the mood is what you listen to · 2026-10-12 · `🆕 LATEST`
+## M27 · Songs no longer cut a second after they start; each session starts fresh · 2026-10-12 · `🆕 LATEST`
 
-**Problems (found while testing, 14:25–14:32):**
-1. The session removed almost all songs, including good picks: 13 of the user's songs at 14:25:23 and 14 of Moodly's picks at 14:31:05. Then, with the queue empty, the "mood" was a single song (*Pal Pal*, 0.25/0.60), so it jumped far from the target.
-   - **Cause:** not the far-from-both rule (at most 2 per cycle) but the duplicate rule.
-   - Spotify (market IN) reports some songs under a **relinked id** that differs from the id in the playlist. The queue then never matched the playlist, so it was all taken as the user's own "Add to queue" songs, and every playlist song looked like a duplicate of them.
-   - The same relinking hid the song playing in the playlist (*Bandhu 2.0*).
-   - Spotify's Repeat was off, so it wasn't Repeat.
-2. Right after a new target, songs were removed for being far from the target alone. The user's rule is: far from both the mood and the target.
-3. The mood averaged Moodly's upcoming picks too, so it didn't match what was playing (e.g. *Channa Mereya*).
+**Problems (live test 15:11–15:20, Liked Songs → Energized):**
+1. **Songs were cut 1–2 s after they started.** Three times a song started, the cycle about 3 s later added songs and reloaded the playlist, and a second later the next song played:
+   - 15:17:06 *Chammak Challo* → 15:17:11 *Aarzu*
+   - 15:17:57 *Chinni Gundelo* → 15:18:01 *Saiyaara*
+   - 15:19:08 *Kalank* → 15:19:12 *Salam Anali*
+
+   Cause: the reload (`play_context`) started the playlist "at position N" (the song playing in the app's listing), and Spotify started the song after it. So Spotify's count of the entries was one ahead of what its API lists. The constant "queue doesn't line up" warnings fit the same mismatch.
+2. **The U-turn on the path** (0.59 → 0.53 at 15:17:11): *Chammak Challo* (0.94, 0.88) was cut after 2 s. The song after it, *Aarzu*, has no mood data, so the mood fell back to the user's own songs ahead (lower).
+3. **A new session remembered the last one.** The played, added and removed songs carried over, so at 15:15:48 *Lutt Le Gaya* and *Dhurandhar* were removed as "already played": they had played in the 14:49 session.
+4. **A mismatch from M26:** `start()` still recorded Spotify's copy of the playlist by id, while the rest compares title + artists.
 
 **Modifications:**
-1. **Songs are recognised by title + artists** (`song_key`, `Item.key`, `WindowItem.key`). This applies to:
-   - finding the song playing in the playlist
-   - matching Spotify's queue to the playlist
-   - Spotify's copy of the playlist (snapshot)
-   - "already played" (`played_keys`; `note_started` now gets the title and artists)
-   - the duplicate check
-2. **Misread-queue guard:**
-   - When "the user's own queue" is mostly playlist songs that weren't copied in at hand-over, the queue was misread. It is then treated as the playlist, and nothing is removed on that basis (`max_manual_overlap` = 3).
-   - Only songs that already played, or the user's real queued songs, count as duplicates.
-3. **One removal rule:** `choose_removals` (far from both the mood and the target) also applies after a new target, with its cap of 5. The far-from-target-only rule (`choose_retarget_removals`) is gone.
-4. **Mood = what the user listens to** (`listening_mood`):
-   - It averages the song playing (whoever picked it) and the user's own songs ahead (their queued songs, or the playlist they were playing at the start), each once, up to 20.
-   - Moodly's picks (`added_keys`, `WindowItem.ours`) count once they play.
-   - The same rule applies when a song starts (`_advance_mood`).
-5. **Planning:**
-   - The Markov step starts from where the whole queue is heading (`CyclePlan.ahead`, the old average), so each new pick goes one step further.
-   - Removals, "settled" and the shown mood use the listening mood.
-   - The trace records `ahead` and each window song's `ours` flag.
-6. Tests start from "For you", whatever was last picked in the sidebar (`conftest.py`).
-7. **Ready step:** the pool that has just finished is handed to the session before the first "ready" step. A live test showed that step adding nothing: it ran a moment before the 141 Liked Songs arrived.
-8. **Docs:** SPEC (mood, removal rule, relinking), MANUAL (how fast).
+1. **Reload at the song, not the position:**
+   - `play_context(..., track_uri=)` uses Spotify's "start at this track" offset (`offset.uri`).
+   - `_play_at()` names the song whenever it is in the playlist once (by position only if it appears twice).
+   - This applies to the reload after edits, to moving on from a removed song, and to the hand-over at start.
+2. **The song is looked up again after the edits**, before the reload. With a hidden entry, a song inserted "right after the current one" can land just before it.
+3. **Each session starts fresh:** `start()` resets the played, added and removed songs, the pending skip feedback, the last window and `source_dry`.
+4. `start()` records Spotify's copy by title + artists, and de-duplicates the hand-over songs the same way.
+5. **Test mock:** `unlisted` entries that Spotify plays and counts but its API doesn't list, to reproduce the cut.
 
-**Tests:** 248 pass. New:
-- the ready step uses the pool that just finished
-- relinked ids in Spotify's queue remove nothing
-- a queue that doesn't line up removes nothing
-- the mood is the song playing plus the user's songs, not Moodly's picks
-- `listening_mood` counts each song once and skips Moodly's upcoming picks
-- after a new target, songs near the mood stay and only songs far from both go
-
-Changed: the old "new target clears songs far from it" test.
+**Tests:** 250 pass. New:
+- with a hidden entry, adding songs never cuts the song playing (this test fails with the old position-based reload)
+- a new session forgets the last one

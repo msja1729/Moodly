@@ -263,8 +263,8 @@ class PlaylistSession:
             items: list[Item] = []
             seen: set[str] = set()
             for it in [ps.item] + upcoming:
-                if it.uri not in seen:
-                    seen.add(it.uri)
+                if it.key not in seen:
+                    seen.add(it.key)
                     items.append(it)
             items = items[: self.params.max_initial_items]
 
@@ -278,7 +278,7 @@ class PlaylistSession:
                 log.debug("could not turn shuffle off: %s", e)
             # Continue the same song at the same moment (allowing for the time spent setting up).
             progress = ps.progress_ms + int((self.clock.now() - ps.observed_at) * 1000)
-            self.client.play_context(uri, 0, progress)
+            self.client.play_context(uri, 0, progress, track_uri=items[0].uri)
         except PremiumRequired:
             self.status = NOT_PREMIUM
             self._delete_playlist()
@@ -294,9 +294,13 @@ class PlaylistSession:
         self._cur_index = 0
         self._handover_at = self.clock.now()
         self._foreign_seen = 0
-        self._known_uris = {it.uri for it in items}
-        self._snapshot, self._snap_index = [it.uri for it in items], 0
-        self.played_ids = {ps.item.id}
+        self._known_uris = {it.uri for it in items} | {it.key for it in items}
+        self._snapshot, self._snap_index = [it.key for it in items], 0
+        # A new session starts fresh: nothing from the last one counts as played, added or removed.
+        self.played_ids, self.played_keys = {ps.item.id}, {ps.item.key}
+        self.added_keys, self.removed_ids, self.pending = set(), set(), {}
+        self._window_points, self.source_dry = [], False
+        self.last_added, self.last_removed = [], []
         self.status = MANAGING
         log.info("session started: %d songs moved into '%s'", len(items), SESSION_NAME)
         if self.feedback:
@@ -358,7 +362,7 @@ class PlaylistSession:
             # Move on to the current playlist's next song.
             nxt = min(cur + 1, len(entries) - 1)
             log.info("Spotify was playing a song already removed from the playlist; moving on")
-            self.client.play_context(self.playlist_uri, nxt, 0)
+            self._play_at(entries, nxt, 0)
             self._cur_index = nxt
             self._after_resync(entries, nxt)
             return
@@ -527,8 +531,20 @@ class PlaylistSession:
         very short blip.
         """
         progress = ps.progress_ms + int((self.clock.now() - ps.observed_at) * 1000)
-        self.client.play_context(self.playlist_uri, cur, progress)
-        self._after_resync(None, cur)
+        entries = self.client.playlist_items(self.playlist_id)
+        found, here = self._locate(entries, ps.item.uri)  # the edits may have moved it
+        if here:
+            cur = found
+        self._play_at(entries, cur, progress)
+        self._after_resync(entries, cur)
+
+    def _play_at(self, entries: list[Item], index: int, progress_ms: int) -> None:
+        """Play the session playlist from entry `index`, naming the song itself when it is in the playlist
+        once. Spotify's own count of entries can be ahead of its API's listing, and starting "at position N"
+        then cuts the song after a second and plays the next one."""
+        uri = entries[index].uri if 0 <= index < len(entries) else None
+        unique = uri is not None and sum(e.uri == uri for e in entries) == 1
+        self.client.play_context(self.playlist_uri, index, progress_ms, track_uri=uri if unique else None)
 
     def _poor(self, plan, far: float | None = None, average: bool = False) -> bool:
         """No picks, or picks far from the waypoint (any of them, or on `average`): the table ran dry nearby."""

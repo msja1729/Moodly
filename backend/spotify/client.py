@@ -245,8 +245,12 @@ class LiveSpotifyClient:
             self._call(self.sp._delete, f"playlists/{playlist_id}/items",
                        payload={"items": [{"uri": u} for u in uris[i:i + 100]]})
 
-    def play_context(self, context_uri: str, offset: int = 0, position_ms: int = 0) -> None:
-        self._call(self.sp.start_playback, context_uri=context_uri, offset={"position": offset},
+    def play_context(self, context_uri: str, offset: int = 0, position_ms: int = 0,
+                     track_uri: str | None = None) -> None:
+        """Play the playlist from entry `offset`, or (safer) from the song `track_uri`: Spotify's own
+        count of a playlist's entries can differ from what its API lists (e.g. an entry it hides)."""
+        start = {"uri": track_uri} if track_uri else {"position": offset}
+        self._call(self.sp.start_playback, context_uri=context_uri, offset=start,
                    position_ms=max(0, int(position_ms)))
 
     def set_shuffle(self, on: bool) -> None:
@@ -408,6 +412,7 @@ class MockSpotifyClient:
         self.calls = 0
         self.playlists: dict[str, list[list[str]]] = {}  # id -> [[entry uid, uri], ...]
         self.user_playlists: dict[str, tuple[str, list[str]]] = {}  # song sources: id -> (name, track ids)
+        self.unlisted: set[str] = set()  # playlist entries Spotify plays but its API doesn't list (tests)
         self.liked: list[str] = []
         self.deleted_playlists: list[str] = []
         self.context: str | None = None  # playing playlist URI
@@ -628,7 +633,7 @@ class MockSpotifyClient:
 
     def playlist_items(self, playlist_id: str) -> list[Item]:
         self._tick()
-        return [self._item(uri) for _, uri in self.playlists[playlist_id]]
+        return [self._item(uri) for _, uri in self.playlists[playlist_id] if uri not in self.unlisted]
 
     def playlist_add(self, playlist_id: str, uris: list[str], position: int | None = None) -> None:
         self._tick()
@@ -652,9 +657,13 @@ class MockSpotifyClient:
             self._ctx_pos = here + 1 - sum(1 for _, u in entries[:here] if u in drop)
         entries[:] = [e for e in entries if e[1] not in drop]
 
-    def play_context(self, context_uri: str, offset: int = 0, position_ms: int = 0) -> None:
+    def play_context(self, context_uri: str, offset: int = 0, position_ms: int = 0,
+                     track_uri: str | None = None) -> None:
         self._tick()
         entries = self.playlists[context_uri.rsplit(":", 1)[-1]]
+        if track_uri is not None:
+            offset = next(i for i, (_, u) in enumerate(entries) if u == track_uri)
+        # else: Spotify counts every entry, including those its API leaves out of the listing (`unlisted`).
         uid, uri = entries[offset]
         track = self.catalog[uri.rsplit(":", 1)[-1]][0]
         if self.context != context_uri:

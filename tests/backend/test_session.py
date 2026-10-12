@@ -548,3 +548,33 @@ def test_mood_is_what_the_user_listens_to_not_moodlys_picks(big_catalog, clock):
     assert s.last_added
     own = [big_catalog[t][1].point for t in songs]  # the song playing + the user's 4 queued songs
     assert s.mood == pytest.approx((sum(p[0] for p in own) / 5, sum(p[1] for p in own) / 5))
+
+
+def test_edits_never_cut_the_song_playing_when_spotify_counts_a_hidden_entry(big_catalog, clock):
+    # Spotify can count a playlist entry its API doesn't list. Restarting "at position N" then lands on the
+    # next song a second after it started; restarting at the song itself keeps it playing.
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    hidden = next(t for t in big_catalog if t not in songs)
+    client.playlists[s.playlist_id].insert(0, [client._new_uid(), f"spotify:track:{hidden}"])
+    client.unlisted = {f"spotify:track:{hidden}"}
+    playing = client.player_state().item.uri
+    clock.advance(5)
+    s.cycle((0.1, 0.1), "ready")  # adds songs, then makes Spotify reload the playlist
+    assert s.last_added and client.player_state().item.uri == playing
+    assert client.player_state().progress_ms >= 5000  # same moment, not restarted
+
+
+def test_a_new_session_forgets_the_last_one(big_catalog, clock):
+    client, songs = playing_client(big_catalog, clock, queued=4)
+    s = make_session(client, big_catalog, clock)
+    s.start()
+    s.cycle((0.1, 0.1), "ready")
+    t = big_catalog[songs[1]][0]
+    s.note_started(songs[1], t.name, t.artists)
+    assert s.added_keys and len(s.played_keys) == 2
+    s.end()
+    assert s.start()
+    now = client.player_state().item
+    assert s.played_keys == {now.key} and not s.added_keys and not s.removed_ids and not s.pending
