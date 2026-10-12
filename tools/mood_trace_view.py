@@ -5,6 +5,9 @@
 Start the app with AMBIENT_MOOD_TRACE set to the same file, then open
 http://127.0.0.1:8765 . The page re-reads the trace every second.
 
+Trials are saved to reports/trials/ (tools/trial_reports.py): automatically when a
+session ends while the page is open, or with "Save trial" / "Save all trials".
+
 Easier: tools/dev_dashboard.ps1 (Windows) or tools/dev_dashboard.sh (macOS)
 starts the app with the trace on; the app then serves this page itself and
 shows a "Mood path dashboard" link in the sidebar and the tray menu.
@@ -19,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from shared.config_io import APP_HOME, load_config
+from tools import trial_reports
 
 DEFAULT_TRACE = APP_HOME / "data" / "mood_trace.jsonl"
 
@@ -45,7 +49,8 @@ def moods() -> dict:
         return {}
 
 
-def handler_for(trace: Path):
+def handler_for(trace: Path, reports: Path | None = None):
+    reports = reports or trial_reports.REPORTS_DIR
     cache: dict = {}  # the last answer, by the trace file's (mtime, size): parsed once per change
 
     def trace_body() -> tuple[bytes, str]:
@@ -61,7 +66,9 @@ def handler_for(trace: Path):
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            if self.path.startswith("/trace.json"):
+            if self.path.startswith("/saved.json"):
+                body, kind, sig = json.dumps(trial_reports.saved_ids(reports)).encode(), "application/json", ""
+            elif self.path.startswith("/trace.json"):
                 body, sig = trace_body()
                 if self.headers.get("If-None-Match") == f'"{sig}"':
                     self.send_response(304)  # nothing new: the page keeps what it has
@@ -78,6 +85,25 @@ def handler_for(trace: Path):
             self.send_header("Cache-Control", "no-cache")
             if self.path.startswith("/trace.json"):
                 self.send_header("ETag", f'"{sig}"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            """Save a trial (graphs, summary, raw events) into reports/trials/."""
+            if self.path != "/save":
+                self.send_error(404)
+                return
+            try:
+                size = int(self.headers.get("Content-Length") or 0)
+                if size <= 0 or size > 40_000_000:
+                    raise ValueError("bad size")
+                folder = trial_reports.save_trial(json.loads(self.rfile.read(size)), reports)
+                body, code = json.dumps({"ok": True, "folder": str(folder)}).encode(), 200
+            except Exception as e:  # a bad payload: say so, keep serving
+                body, code = json.dumps({"ok": False, "error": str(e)}).encode(), 400
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -105,8 +131,9 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--trace", type=Path, default=DEFAULT_TRACE)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--reports", type=Path, default=None, help="where trials are saved (default reports/trials)")
     args = ap.parse_args(argv)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(args.trace))
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(args.trace, args.reports))
     url = f"http://127.0.0.1:{args.port}/"
     print(f"mood trace viewer: {url}  (trace: {args.trace})", flush=True)
     if not args.no_browser:
@@ -127,6 +154,10 @@ header { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; paddin
 header h1 { font-size:17px; margin:0; font-weight:700; }
 header label { color:var(--muted); font-size:13px; display:flex; gap:6px; align-items:center; cursor:pointer; }
 header .meta { color:var(--muted); font-size:12px; margin-left:auto; }
+header #saveMsg { margin-left:0; }
+header button { background:#262b36; color:var(--text); border:1px solid var(--line); border-radius:7px; padding:4px 10px;
+                font:inherit; font-size:12.5px; cursor:pointer; }
+header button:hover { background:#30364a; }
 select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:3px 6px; }
 main { display:grid; grid-template-columns:minmax(360px, 640px) minmax(320px, 1fr); gap:16px; padding:16px 18px; }
 @media (max-width: 980px) { main { grid-template-columns:1fr; } }
@@ -170,6 +201,9 @@ details summary { cursor:pointer; color:var(--rem); }
   <h1>Mood path</h1>
   <label>Session <select id="sess"></select></label>
   <label><input type="checkbox" id="showDetails"> Show details (waypoints, all picks, charts)</label>
+  <button id="saveOne" title="Save this session's graphs and numbers to reports/trials/">Save trial</button>
+  <button id="saveAll" title="Save every ended session that isn't saved yet">Save all trials</button>
+  <span class="meta" id="saveMsg"></span>
   <span class="meta" id="meta"></span>
 </header>
 <main>
@@ -215,6 +249,7 @@ function el(parent, tag, attrs, tipText) {
 }
 const text = (parent, attrs, s) => { const t = el(parent, "text", attrs); t.textContent = s; return t; };
 const pt = p => p ? `(${p[0].toFixed(2)}, ${p[1].toFixed(2)})` : "–";
+const f2 = v => v == null ? "–" : Number(v).toFixed(2);
 const dist = (a, b) => (a && b) ? Math.hypot(a[0] - b[0], a[1] - b[1]) : null;
 const clock = t => new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
@@ -428,10 +463,15 @@ function drawSeries(svgId, steps, series, yMax) {
 function render() {
   const all = sessions(DATA.events);
   const sel = $("sess");
-  sel.innerHTML = all.map((s, i) => `<option value="${i}">#${i + 1} · ${clock(s.events[0].t)}${s.events.some(e => e.kind === "end") ? "" : " (live)"}</option>`).join("");
+  sel.innerHTML = all.map((s, i) => `<option value="${i}">#${i + 1} · ${clock(s.events[0].t)}${s.events.some(e => e.kind === "end") ? "" : " (live)"}${SAVED.has(trialId(s)) ? " · saved" : ""}</option>`).join("");
   const idx = chosen == null ? all.length - 1 : Math.min(chosen, all.length - 1);
   if (all.length) sel.value = idx;
-  const A = analyse((all[idx] || {events: []}).events);
+  drawSession(all[idx] || {events: []});
+  autoSave(all);
+}
+
+function drawSession(sess) {
+  const A = analyse(sess.events);
   $("meta").textContent = `updated ${new Date().toLocaleTimeString()}`;
   drawPlane(A); drawNow(A); drawNext(A); drawFeed(A);
   // The gap chart starts when the current target was set.
@@ -439,6 +479,131 @@ function render() {
   drawSeries("dist", since, [{get: s => s.d, color: "#ffcf5a"}], Math.max(0.2, ...since.map(s => s.d || 0)) * 1.1);
   drawSeries("axes", A.steps, [{get: s => s.mood[0], color: "#56d68c"}, {get: s => s.mood[1], color: "#5fb3ff"},
     {get: s => s.target && s.target[0], color: "#56d68c", dash: true}, {get: s => s.target && s.target[1], color: "#5fb3ff", dash: true}], 1);
+  return A;
+}
+
+// ---------------------------------------------------------------- trials: measure and save
+let SAVED = new Set(), saving = false;
+const slug = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x";
+const pad = n => String(n).padStart(2, "0");
+function trialId(sess) {
+  const d = new Date(sess.events[0].t * 1000);
+  const c = sess.events.filter(e => e.kind === "cycle");
+  const last = c[c.length - 1] || {};
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}` +
+         `_${slug(targetName(last.target))}_${slug(last.source || "unknown")}`;
+}
+
+function summarize(sess, A) {
+  const since = A.first ? A.steps.filter(s => s.t >= A.first.t) : [];
+  const t0 = sess.events[0].t, tEnd = sess.events[sess.events.length - 1].t;
+  const reach = th => { const s = since.find(s => s.d <= th); return s ? (s.t - A.first.t) / 60 : null; };
+  let setbacks = 0, worst = 0;
+  for (let i = 1; i < since.length; i++) {
+    const up = since[i].d - since[i - 1].d;
+    if (up > 0.05) setbacks++;
+    worst = Math.max(worst, up);
+  }
+  const cyc = since.filter(s => s.kind === "cycle");
+  const adds = cyc.flatMap(c => c.added.map(a => dist(a.point, c.target) < dist(c.mood, c.target)));
+  const ended = sess.events.filter(e => e.kind === "ended");
+  const lastC = cyc[cyc.length - 1] || A.cycles[A.cycles.length - 1] || {};
+  const r2 = v => v == null ? null : Math.round(v * 1000) / 1000;
+  return {
+    date: new Date(t0 * 1000).toLocaleString(), target: targetName(A.last && A.last.target),
+    target_point: A.last && A.last.target, source: lastC.source || "unknown", minutes: r2((tEnd - t0) / 60),
+    start_gap: r2(A.first && A.first.d), end_gap: r2(A.last && A.last.d), best_gap: r2(since.length ? Math.min(...since.map(s => s.d)) : null),
+    closed_pct: A.first && A.first.d ? r2(100 * (1 - A.last.d / A.first.d)) : null,
+    min_to_0_1: r2(reach(0.1)), min_to_0_05: r2(reach(0.05)),
+    picks_toward_pct: adds.length ? r2(100 * adds.filter(Boolean).length / adds.length) : null,
+    setbacks, worst_setback: r2(worst), cycles: cyc.length,
+    songs_played: since.filter(s => s.kind === "song").length,
+    skip_pct: ended.length ? r2(100 * ended.filter(e => e.skipped).length / ended.length) : null,
+    added: cyc.reduce((n, c) => n + c.added.length, 0), removed: cyc.reduce((n, c) => n + c.removed.length, 0),
+    ended: sess.events.some(e => e.kind === "end"),
+  };
+}
+
+function svgFile(id) {  // a standalone copy of a chart: size, background and font set
+  const src = $(id), vb = src.viewBox.baseVal, svg = src.cloneNode(true);
+  svg.setAttribute("xmlns", NS);
+  svg.setAttribute("width", vb.width); svg.setAttribute("height", vb.height);
+  svg.setAttribute("font-family", "Segoe UI, system-ui, sans-serif");
+  const bg = document.createElementNS(NS, "rect");
+  bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", "#171a21");
+  svg.insertBefore(bg, svg.firstChild);
+  return {xml: new XMLSerializer().serializeToString(svg), w: vb.width, h: vb.height};
+}
+
+async function pngOf(f) {
+  const img = new Image();
+  await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad;
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(f.xml); });
+  const c = document.createElement("canvas"); c.width = f.w * 2; c.height = f.h * 2;
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL("image/png").split(",")[1];
+}
+
+function reportHtml(id, S, feedHtml) {
+  const rows = [["Target", `${S.target} ${pt(S.target_point)}`], ["Songs from", S.source], ["Date", S.date],
+    ["Length", `${(S.minutes || 0).toFixed(1)} min`], ["Gap: start → end (best)", `${f2(S.start_gap)} → ${f2(S.end_gap)} (${f2(S.best_gap)})`],
+    ["Closed", S.closed_pct == null ? "–" : `${Math.round(S.closed_pct)}%`],
+    ["Time to gap ≤ 0.10 / ≤ 0.05", `${S.min_to_0_1 == null ? "never" : S.min_to_0_1.toFixed(1) + " min"} / ${S.min_to_0_05 == null ? "never" : S.min_to_0_05.toFixed(1) + " min"}`],
+    ["Picks closer to the target than the mood", S.picks_toward_pct == null ? "–" : `${Math.round(S.picks_toward_pct)}%`],
+    ["Setbacks (gap grew > 0.05)", `${S.setbacks} (worst ${f2(S.worst_setback)})`],
+    ["Songs played / skipped", `${S.songs_played} / ${S.skip_pct == null ? "–" : Math.round(S.skip_pct) + "%"}`],
+    ["Songs added / removed", `${S.added} / ${S.removed}`]];
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trial ${esc(id)}</title><style>
+body{margin:0;background:#0f1115;color:#e8e9ee;font:14px/1.5 "Segoe UI",system-ui,sans-serif;padding:18px;max-width:1100px}
+h1{font-size:19px;margin:0 0 4px} h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#9aa1b2;margin:22px 0 8px}
+table{border-collapse:collapse} td{padding:5px 14px 5px 0;border-bottom:1px solid #2a2f3a;vertical-align:top} td:first-child{color:#9aa1b2}
+img{max-width:100%;border-radius:10px;border:1px solid #2a2f3a;margin:4px 0} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.ev{padding:7px 0;border-bottom:1px solid #2a2f3a} .ev time{color:#9aa1b2;margin-right:8px} .pt{color:#9aa1b2;font-size:12.5px}
+.add{color:#56d68c} .rem{color:#ff8a5c} ul{margin:4px 0;padding-left:18px} details summary{cursor:pointer;color:#ff8a5c}
+</style></head><body><h1>Trial ${esc(id)}</h1><div class="pt">Mood path dashboard report</div>
+<h2>Summary</h2><table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+<h2>Where the music went</h2><div class="grid"><img src="plane.png" alt="mood path"><img src="plane_details.png" alt="mood path with waypoints and picks"></div>
+<h2>Gap to the target and valence / energy over time</h2><div class="grid"><img src="gap.png" alt="gap over time"><img src="valence_energy.png" alt="valence and energy over time"></div>
+<h2>Every step</h2>${feedHtml}</body></html>`;
+}
+
+async function saveTrial(sess) {
+  const id = trialId(sess), body = document.body, details = body.classList.contains("details");
+  body.classList.remove("details");
+  const A = drawSession(sess);
+  const S = summarize(sess, A);
+  const files = {}, charts = {plane: "plane", gap: "dist", valence_energy: "axes"};
+  for (const [name, el] of Object.entries(charts)) {
+    const f = svgFile(el); files[name + ".svg"] = f.xml; files[name + ".png"] = await pngOf(f);
+  }
+  const feedHtml = $("feed").innerHTML;
+  body.classList.add("details"); drawSession(sess);
+  const fd = svgFile("plane"); files["plane_details.svg"] = fd.xml; files["plane_details.png"] = await pngOf(fd);
+  body.classList.toggle("details", details);
+  files["report.html"] = reportHtml(id, S, feedHtml);
+  const r = await fetch("save", {method: "POST", headers: {"Content-Type": "application/json"},
+                                 body: JSON.stringify({id, summary: S, events: sess.events, files})});
+  const out = await r.json();
+  if (!out.ok) throw new Error(out.error);
+  SAVED.add(id);
+  return id;
+}
+
+async function saveMany(list, label) {
+  if (saving || !list.length) return;
+  saving = true;
+  try {
+    for (const s of list) { $("saveMsg").textContent = `${label} ${trialId(s)}…`; await saveTrial(s); }
+    $("saveMsg").textContent = `saved ${list.length} trial${list.length > 1 ? "s" : ""} to reports/trials/`;
+  } catch (e) { $("saveMsg").textContent = "save failed: " + e.message; }
+  saving = false;
+  render();
+}
+
+function autoSave(all) {  // a session that just ended is saved without asking
+  const done = all.filter(s => s.events.some(e => e.kind === "end") && !SAVED.has(trialId(s)) && s.events[s.events.length - 1].t > OPENED);
+  if (done.length) setTimeout(() => saveMany(done, "auto-saving"), 0);
 }
 
 async function poll() {
@@ -450,6 +615,15 @@ async function poll() {
     if (key !== lastKey) { lastKey = key; render(); }
   } catch (e) { $("meta").textContent = "viewer offline: " + e; }
 }
+const OPENED = Date.now() / 1000 - 60;  // auto-save sessions that end from now on (older ones: "Save all trials")
+fetch("saved.json").then(r => r.json()).then(ids => { SAVED = new Set(ids); render(); }).catch(() => {});
+$("saveOne").addEventListener("click", () => {
+  const all = sessions(DATA.events), idx = chosen == null ? all.length - 1 : chosen;
+  if (all[idx]) saveMany([all[idx]], "saving");
+});
+$("saveAll").addEventListener("click", () => {
+  saveMany(sessions(DATA.events).filter(s => s.events.some(e => e.kind === "end") && !SAVED.has(trialId(s))), "saving");
+});
 $("sess").addEventListener("change", e => { const all = sessions(DATA.events); chosen = +e.target.value === all.length - 1 ? null : +e.target.value; render(); });
 $("showDetails").addEventListener("change", e => { document.body.classList.toggle("details", e.target.checked); render(); });
 poll(); setInterval(poll, 1000);

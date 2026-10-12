@@ -150,6 +150,7 @@ class PlaylistSession:
         self.move_queue_in = True
         self.seed_items: list[Item] = []
         self.heard: deque[Point] = deque(maxlen=params.heard_songs)  # last songs the user heard (not skipped)
+        self.source_label = "For you"  # where songs come from (set by the daemon; for the trace)
         self.languages: frozenset[str] | None = None  # only songs in these languages from `table`
         self.on_missing_features: Callable[[list[str]], None] | None = None  # e.g. Recommender.want_features
         self.features = features
@@ -501,7 +502,7 @@ class PlaylistSession:
                         "why": "plan" if i < planned else "keep music going"}
                        for i, (p, t) in enumerate(insertions)],
                 removed=removed_names, preparing=self.preparing,
-                needs_more_songs=self.needs_more_songs, queue_size=self.queue_size)
+                needs_more_songs=self.needs_more_songs, queue_size=self.queue_size, source=self.source_label)
         if (added or remove_uris or self._resync_pending) and self.params.resync_after_edits:
             if in_playlist:
                 self._resync(ps, cur)
@@ -618,6 +619,8 @@ class PlaylistSession:
 
     def note_ended(self, name: str, artists: str, skipped: bool) -> None:
         """A song ended: if the user listened to it (not a skip), it counts in the mood for a while."""
+        if self.active and self.trace is not None:
+            self.trace.ended(f"{artists} - {name}", skipped)
         if not self.active or skipped:
             return
         key = song_key(name, artists)

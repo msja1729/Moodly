@@ -180,6 +180,8 @@ class Daemon:
             self.write_state()
         elif source_changed:
             log.info("songs now come from: %s", self.recommender.source_label())
+            if self.session is not None:
+                self.session.source_label = self.recommender.source_label()
             if not self.paused:
                 await self._clear_pool()  # the old pool's songs aren't from the new source
                 self._begin_preparing()
@@ -220,6 +222,7 @@ class Daemon:
         """A playlist / Liked Songs session starts fresh: only the song playing and a couple of songs from the
         source, nothing from Spotify's queue. "For you" keeps the user's queue, as before."""
         rec = self.recommender
+        s.source_label = rec.source_label() if rec is not None else "Catalog"
         if rec is None or not rec.custom:
             s.move_queue_in, s.seed_items = True, []
             return

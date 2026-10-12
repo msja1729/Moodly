@@ -48,7 +48,7 @@ class MoodTrace:
             log.debug("could not write the mood trace: %s", e)
 
     def cycle(self, *, reason: str, target, plan, window, added, removed, preparing: bool,
-              needs_more_songs: bool, queue_size: int) -> None:
+              needs_more_songs: bool, queue_size: int, source: str = "") -> None:
         """Record a cycle; a cycle that changed nothing (same mood, waypoint, target, no edits) is skipped."""
         key = (_pt(target) and tuple(_pt(target)), _pt(plan.mood) and tuple(_pt(plan.mood)),
                _pt(plan.waypoint) and tuple(_pt(plan.waypoint)), preparing, tuple(w.uri for w in window))
@@ -56,7 +56,7 @@ class MoodTrace:
             return
         self._last = key
         self.write(
-            "cycle", reason=reason, target=_pt(target), mood=_pt(plan.mood),
+            "cycle", reason=reason, source=source, target=_pt(target), mood=_pt(plan.mood),
             deviation=None if plan.deviation is None else round(float(plan.deviation), 4),
             waypoint=_pt(plan.waypoint),
             direction=None if plan.direction is None else str(plan.direction),
@@ -67,6 +67,9 @@ class MoodTrace:
             window=[{"name": w.name, "artists": w.artists, "point": _pt(w.point),
                      "removable": w.removable, "ours": w.ours} for w in window],
             added=added, removed=removed)
+
+    def ended(self, name: str, skipped: bool) -> None:
+        self.write("ended", name=name, skipped=bool(skipped))
 
     def song(self, name: str, point, mood, target) -> None:
         self.write("song", name=name, point=_pt(point), mood=_pt(mood), target=_pt(target))

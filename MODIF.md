@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M30 · Picks climb toward the target; a steadier mood (at the end, after the summary).
+**Latest:** M31 · Trial reports saved from the dashboard (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M29)
+## Summary of earlier modifications (M1–M30)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -39,35 +39,41 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M27 | 10-12 | **Songs no longer cut a second after they start; each session starts fresh** | After adding songs, the reload "at position N" started the next song (Spotify counts an entry its API doesn't list); a new session remembered the last one's played/added songs. | Reload at the song itself (`offset.uri`), looked up again after the edits; per-session reset. 250 tests. |
 | M28 | 10-12 | **No more lag; popup for where songs come from** | The sidebar/dashboard showed changes late: the backend ran the whole session step before writing the new song, and didn't poll meanwhile. | New song written at once; session steps in the background; refresh only on real state changes; dashboard ETag; Pause/Play retry; Start/New session popup over the blurred sidebar. 252 tests. |
 | M29 | 10-12 | **Only songs from the chosen source; End session leaves the playlist** | Old hand-backs piled up in the user's queue and came back each session; Spotify kept playing the deleted playlist. | A playlist / Liked Songs session starts fresh (the song playing + 2 from the source, no queue, no catalog); End session plays the same song and the next 10 as a plain list. 253 tests. |
+| M30 | 10-12 | **Picks climb toward the target; a steadier mood** | A fresh session filled 11 songs around one step (a plateau that later "pulled away"); the mood was one song, so a sad song dragged picks down. | Staircase refills (2 songs per Markov step, in order); picks must beat both mood and heading; the last 3 heard songs count in the mood; polls retry within 5 s. 257 tests. |
 
 ---
 
-## M30 · Picks climb toward the target; a steadier mood · 2026-10-12 · `🆕 LATEST`
+## M31 · Trial reports saved from the dashboard · 2026-10-12 · `🆕 LATEST` · developer tool
 
-**Question:** "Why is it picking songs that pull away?" (dashboard, Liked Songs → Energized, 34% of the way)
-
-**What the trace showed (15:58–16:11):**
-1. **One-step refill.** The fresh session (M29) had only 2 songs ahead, so the first step filled **11 songs at once around one waypoint**, (0.35, 0.55).
-   - The mood was low then, (0.35, 0.28), so all 11 really were closer to the target than the mood.
-   - Once the mood rose to about (0.43, 0.50), the dashboard (which compares with the current mood) showed them as "pulls away".
-   - The queue was a plateau at step 1, not a climb.
-2. **A one-song mood.** In a fresh session nothing ahead is the user's own, so the mood was **only the song playing**.
-   - *Chennai Express – Sad Theme* (still in Spotify's own queue from earlier hand-backs) made it (0.41, **0.03**).
-   - The next picks aimed low again (*Chitti*, *Emai Pothane*).
-3. **Long waits on timeouts.** Spotify timed out from 16:00 to 16:02, and polling backed off to 24 s between tries.
+**Request:** save the dashboard's results and graphs into a folder in the repo, to compare many trials and summarise how well the app does.
 
 **Modifications:**
-1. **Staircase refills** (`plan_cycle`): when more than `max_adds_per_cycle` songs are needed and the mood isn't settled:
-   - It walks the Markov chain: `picks_per_step` = 2 songs per step, near that step's waypoint, appended in order.
-   - Each step's songs must be closer to the target than the previous step.
-   - `CyclePlan.waypoints` keeps every step (also in the trace), and the session's "picks far from the waypoint" check uses each song's own step.
-2. **Stricter picks:** every pick must be closer to the target than **both** the mood and where the queue is heading (`ahead`). Before, it was only the mood, which can be low for a moment.
-3. **A steadier mood:** the last `heard_songs` = 3 songs the user listened to (not skipped) also count (`PlaylistSession.heard`, `note_ended()` from the daemon). So one song can't swing it. They're reset per session.
-4. **Timeouts:** after errors, the next poll comes within 5 s (`max_backoff_s` 600 → 5). A 429 still waits as Spotify says.
-5. Docs: SPEC (mood, staircase).
+1. **`tools/trial_reports.py`:** writes `reports/trials/<trial>/`. The trial id is `date_time_target_source`, e.g. `2026-10-12_1623_energized_liked-songs`. Each folder has:
+   - `report.html`: the summary table, the four graphs and every step
+   - `plane`, `plane_details`, `gap` and `valence_energy` as `.png` (2× size) and `.svg`
+   - `summary.json`
+   - `trial.json`: the raw trace events
 
-**Tests:** 257 pass. New:
-- a big refill climbs step by step (appended in order, later songs closer)
-- heard songs count in the mood
-- only songs listened to (not skipped) count as heard
-- polls come within 5 s after timeouts
+   It also rebuilds `reports/trials/README.md`: one row per trial, linked to its report, plus averages. File names are checked, so nothing can be written outside the folder.
+2. **Measurements** (`summary.json`, computed in the dashboard from the trace):
+   - target and song source; minutes
+   - gap at start / end / best, and % of the gap closed
+   - minutes to a gap ≤ 0.10 and ≤ 0.05
+   - **picks toward %**: songs added that were closer to the target than the mood *when they were added*
+   - **setbacks**: the gap grew by more than 0.05 between two steps (and the worst one)
+   - songs played, % skipped, songs added / removed, cycles
+3. **Dashboard** (`tools/mood_trace_view.py`):
+   - "Save trial" saves the session shown, and "Save all trials" saves every ended one not yet saved.
+   - A session that ends while the page is open is saved automatically, and saved sessions are marked in the list.
+   - Server: `POST /save`, `GET /saved.json`, and a `--reports` folder option.
+4. **Trace:** each cycle records the song source, and each finished song whether it was skipped (`ended` events), so the reports can show both.
+5. Docs: SPEC.
+
+**Checked:** saved the live session (Energized, 13 min) from the dashboard into a scratch folder:
+- all 11 files written
+- gap 0.68 → 0.05 (92% closed), 7.6 min to ≤ 0.10, 72% of picks toward the target, 1 setback
+- the PNG matches the dashboard
+
+**Tests:** 259 pass. New:
+- a trial folder and the table of all trials (with averages)
+- names that could escape the folder are refused
