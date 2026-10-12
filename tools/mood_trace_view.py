@@ -4,11 +4,16 @@
 
 Start the app with AMBIENT_MOOD_TRACE set to the same file, then open
 http://127.0.0.1:8765 . The page re-reads the trace every second.
+
+Easier: tools/dev_dashboard.ps1 (Windows) or tools/dev_dashboard.sh (macOS)
+starts the app with the trace on; the app then serves this page itself and
+shows a "Mood path dashboard" link in the sidebar and the tray menu.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -62,6 +67,18 @@ def handler_for(trace: Path):
             pass
 
     return Handler
+
+
+def start_in_background(trace: Path, port: int = 8765) -> str:
+    """Serve the dashboard from a background thread; returns its URL. If the port is taken
+    (a viewer is already running), that one is used."""
+    url = f"http://127.0.0.1:{port}/"
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(Path(trace)))
+    except OSError:
+        return url
+    threading.Thread(target=server.serve_forever, name="mood-dashboard", daemon=True).start()
+    return url
 
 
 def main(argv: list[str] | None = None) -> None:

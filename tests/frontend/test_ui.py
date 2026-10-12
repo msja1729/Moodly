@@ -373,3 +373,25 @@ def test_cover_art_shows_the_album_image(qtbot):
     assert panel.cover.image is not None and panel.cover.image.pixelColor(10, 10) == QColor("#336699")
     panel.show_state(None, "focused")
     assert panel.cover.image is None  # placeholder
+
+
+def test_dashboard_link_only_with_the_trace_on(qtbot, tmp_config, monkeypatch):
+    from frontend import app as app_mod
+    monkeypatch.delenv("AMBIENT_MOOD_TRACE", raising=False)
+    assert app_mod.dev_dashboard() is None  # users never see it
+    plain = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000)
+    qtbot.addWidget(plain.window)
+    assert plain.panel.dashboard.isHidden()
+    assert not any("dashboard" in a.text() for a in plain.menu.actions())
+    plain.timer.stop()
+    plain.tray.hide()
+    url = "http://127.0.0.1:8765/"
+    dev = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000, dashboard_url=url)
+    qtbot.addWidget(dev.window)
+    assert not dev.panel.dashboard.isHidden() and url in dev.panel.dashboard.text()
+    assert any("dashboard" in a.text() for a in dev.menu.actions())
+    monkeypatch.setattr(app_mod, "FROZEN", True)
+    monkeypatch.setenv("AMBIENT_MOOD_TRACE", str(tmp_config.parent / "t.jsonl"))
+    assert app_mod.dev_dashboard() is None  # never in the installed app
+    dev.timer.stop()
+    dev.tray.hide()

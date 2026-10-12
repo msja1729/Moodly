@@ -745,6 +745,13 @@ class SidebarPanel(QWidget):
         status.addWidget(self.details, 1)
         status.addWidget(self.map, 0, Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(status)
+        # Development only: a link to the mood path dashboard (set_dashboard).
+        self.dashboard = QLabel("")
+        self.dashboard.setObjectName("Muted")
+        self.dashboard.setOpenExternalLinks(True)
+        self.dashboard.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.dashboard.hide()
+        padded(self.dashboard, 0, 8)
         padded(Divider(), 0, 4)
 
         # Target moods.
@@ -831,6 +838,14 @@ class SidebarPanel(QWidget):
             self.avatar.initial = (account.display_name[:1] or "?").upper()
             self.logout.show()
         self.avatar.update()
+
+    def set_dashboard(self, url: str | None) -> None:
+        """Show a link to the mood path dashboard (testing builds only)."""
+        if url:
+            self.dashboard.setText(f'<a href="{url}" style="color: {TEXT}; text-decoration: none;">'
+                                   f'📈 Mood path dashboard ↗</a>')
+            self.dashboard.setToolTip(f"Testing: open {url}")
+        self.dashboard.setVisible(bool(url))
 
     def set_selected(self, key: str) -> None:
         if key in self.tiles and not self.tiles[key].isChecked():

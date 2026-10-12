@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M23 · Release 0.3.0 for Windows and Mac (at the end, after the summary).
+**Latest:** M24 · A link to the mood path dashboard, for testing (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M22)
+## Summary of earlier modifications (M1–M23)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -32,22 +32,26 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M20 | 10-12 | **Waves instead of the pointer light, bolder text, no crosshair or window dots** | The pointer light was too bright and hid the text; the text should be bolder; the map crosshair and window dots weren't wanted. | Soft waves behind the text when the pointer moves (one per 38 px, fade over 1.6 s); `ui_font()` with heavier weights; crosshair, readout and window dots removed. 232 tests. |
 | M21 | 10-12 | **Mood path trace and live plot (testing)** | Wanted to see the mood move toward the target while listening. | Opt-in trace (`AMBIENT_MOOD_TRACE`) of every cycle/song change; a local web viewer (`tools/mood_trace_view.py`) plots it live. 233 tests. |
 | M22 | 10-12 | **Player controls, album cover, sync under 1 s, simpler mood path view** | The mood path page was hard to read; the sidebar lacked a cover and player buttons; sync took up to 3 s. | Cover art, Play/Pause and Next (sidebar → `data/player.cmd` → daemon → Spotify), a time readout, a small mood map at the side; polling 0.75 s / 2 s; the mood path page rewritten around "right now", "up next" and what Moodly did. 237 tests. |
+| M23 | 10-12 | **Release 0.3.0 for Windows and Mac** | The new frontend and backend were only on `dev`. | `dev` merged into `main`; `v0.3.0` published with the Windows installer and both Mac `.dmg` files and plain-language notes (including "turn off Repeat"). |
 
 ---
 
-## M23 · Release 0.3.0 for Windows and Mac · 2026-10-12 · `🆕 LATEST`
+## M24 · A link to the mood path dashboard, for testing · 2026-10-12 · `🆕 LATEST` · `dev` only
 
-**Request:** merge the frontend and backend changes into `main` and publish a release for Windows and Mac.
+**Request:** a link to open the mood path dashboard while testing, kept only on the development branch.
 
 **Modifications:**
-1. `dev` (M17–M22) merged into `main`.
-2. Release `v0.3.0` on GitHub with plain-language notes:
-   - the glass sidebar that follows the mood, with waves behind the text
-   - album cover, Play/Pause and Next, and a small mood map
-   - sync within a second
-3. Windows installer `AmbientMood-Setup-0.3.0.exe` built locally (`packaging/build.ps1 -Version 0.3.0`).
-4. The Mac `.dmg` files (Apple silicon and Intel) are built by the `release-mac.yml` workflow when the release is published.
-5. The developer-only mood trace (M21) is in the code but stays off unless `AMBIENT_MOOD_TRACE` is set. The viewer (`tools/`) isn't part of the installers.
+1. **One command to test:** `.\tools\dev_dashboard.ps1` (Windows) or `bash tools/dev_dashboard.sh` (macOS) runs the app from source with `AMBIENT_MOOD_TRACE=data/mood_trace.jsonl`.
+2. **The app serves the dashboard itself** (`frontend/app.py`, `dev_dashboard()`):
+   - When it runs from source with the trace on, it starts the viewer in a background thread (`tools.mood_trace_view.start_in_background`).
+   - If a viewer is already running on port 8765, that one is used.
+3. **The link:**
+   - A "📈 Mood path dashboard ↗" link under the status line in the sidebar.
+   - A "Mood path dashboard (testing)" item in the tray menu.
+   - Both open http://127.0.0.1:8765 in the browser.
+4. **Never for users:** there's no link and no server in the installed app (`FROZEN`) or without the trace.
+5. **Branch:** committed to `dev` only; `main` and the 0.3.0 release don't have it.
 
-**Not done / limits:**
-- The Repeat issue seen in testing is still open: with Spotify's Repeat on, the session can remove its own songs, and the mood briefly reads from one song.
+**Tests:** 238 pass. New: the link and tray item appear only with a dashboard URL; `dev_dashboard()` returns nothing without the trace or in the installed app.
+
+**Note:** a later merge of `dev` into `main` would bring this along. It stays invisible to users even then.

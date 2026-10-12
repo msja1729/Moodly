@@ -22,14 +22,15 @@ import argparse
 import json
 import logging
 import math
+import os
 import sys
 import time
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QEvent, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer
-from PyQt6.QtGui import (QAction, QColor, QCursor, QGuiApplication, QIcon, QLinearGradient, QPainter, QPainterPath,
-                         QPen, QPixmap, QRadialGradient)
+from PyQt6.QtCore import QEvent, QFileSystemWatcher, QPointF, QRectF, Qt, QTimer, QUrl
+from PyQt6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QIcon, QLinearGradient,
+                         QPainter, QPainterPath, QPen, QPixmap, QRadialGradient)
 from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
 from frontend.components import DEFAULT_TINT, SidebarPanel, blend
@@ -279,7 +280,8 @@ def mood_icon(color: str) -> QIcon:
 class MoodTrayApp:
     def __init__(self, config_path: Path | str = DEFAULT_CONFIG_PATH, state_path: Path | str | None = None,
                  poll_ms: int = 1500, account=None, store=None,
-                 choose_account: Callable[[object], object | None] | None = None, daemon=None):
+                 choose_account: Callable[[object], object | None] | None = None, daemon=None,
+                 dashboard_url: str | None = None):
         self.config_path = Path(config_path)
         self.account = account
         self.store = store
@@ -313,6 +315,11 @@ class MoodTrayApp:
         quit_action = QAction("Quit", menu)
         quit_action.triggered.connect(QApplication.quit)
         menu.addAction(open_action)
+        if dashboard_url:  # development only (see dev_dashboard())
+            dash_action = QAction("Mood path dashboard (testing)", menu)
+            dash_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(dashboard_url)))
+            menu.addAction(dash_action)
+            self.panel.set_dashboard(dashboard_url)
         menu.addSeparator()
         menu.addAction(self.account_action)
         menu.addAction(logout_action)
@@ -477,6 +484,21 @@ def watch_quit_requests(quit_file: Path, interval_ms: int = 1000) -> QTimer:
     return timer
 
 
+def dev_dashboard() -> str | None:
+    """Development only: with AMBIENT_MOOD_TRACE set (tools/dev_dashboard.ps1 / .sh) and running from
+    source, serve the mood path dashboard and return its link. Never in the installed app."""
+    trace = os.environ.get("AMBIENT_MOOD_TRACE")
+    if FROZEN or not trace:
+        return None
+    try:
+        from tools.mood_trace_view import start_in_background
+    except ImportError:
+        return None
+    url = start_in_background(Path(trace))
+    log.info("mood path dashboard: %s", url)
+    return url
+
+
 def choose_spotify_account(store=None):
     """Show the Spotify account window. Returns the chosen Account, or None if the user quit."""
     from backend.spotify.auth import AccountStore
@@ -517,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         daemon = DaemonProcess(DEFAULT_CONFIG_PATH)
         daemon.start()
         app.aboutToQuit.connect(daemon.stop)
-    tray_app = MoodTrayApp(account=account, daemon=daemon)
+    tray_app = MoodTrayApp(account=account, daemon=daemon, dashboard_url=dev_dashboard())
     tray_app.tray.showMessage("Ambient Mood", "Running in the tray - click the icon to choose a mood.",
                               QSystemTrayIcon.MessageIcon.Information, 3000)
     return app.exec()

@@ -173,7 +173,7 @@ A background daemon and lightweight desktop UI that monitors a user's emotional 
 *   `backend/actuators/workspace.py` (IDE and terminal JSONC hot-swapping)
 *   `backend/actuators/display.py` (OS-level screen temperature control)
 *   `backend/feedback.py` (Logging and intervention evaluation)
-*   `backend/trace.py`, `tools/mood_trace_view.py` (Developer only, not shipped: with `AMBIENT_MOOD_TRACE=<file>` every session cycle and song change is logged as JSON lines (target, mood, waypoint, each queue song's point, songs added and removed); the viewer serves a live plot of the mood path at http://127.0.0.1:8765)
+*   `backend/trace.py`, `tools/mood_trace_view.py` (Developer only, not shipped: with `AMBIENT_MOOD_TRACE=<file>` every session cycle and song change is logged as JSON lines (target, mood, waypoint, each queue song's point, songs added and removed); the viewer serves a live plot of the mood path at http://127.0.0.1:8765. `tools/dev_dashboard.ps1` / `.sh` run the app from source with the trace on; the app then serves the dashboard itself and shows a "Mood path dashboard" link in the sidebar and tray menu. Never shown in the installed app. Kept on `dev` only)
 *   `recommender/engine.py` (Phase 3: background refresh, artists, pool, taste and freshness)
 *   `recommender/profile.py` (Phase 3: taste profile, top-2 languages, freshness)
 *   `recommender/language.py` (Phase 3: a song's language from markers, script, lyrics)
