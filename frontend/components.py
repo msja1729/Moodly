@@ -3,8 +3,10 @@
 After the reference design (Glass design UI.jpg). Top to bottom:
 
     Ambient Mood          title, then a fading divider
-    NOW PLAYING           song, artist, a live progress bar
-    [mood map]            current mood (white) -> target (tinted), status line
+    NOW PLAYING           [cover] song, artist, play/pause + next buttons;
+                          a live progress bar with the time;
+                          status line with a small mood map at its side
+                          (current mood white -> target tinted)
     MOODS                 rows: glyph + label. The target is a lighter glass pill with a
                           white bar on the left edge and a chevron; a dot marks the mood
                           closest to how the music feels now
@@ -26,11 +28,14 @@ frontend.app.GlassWindow.)
 from __future__ import annotations
 
 import math
+import threading
 import time
+import urllib.request
 from typing import Any, Mapping
 
-from PyQt6.QtCore import QEasingCurve, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation, pyqtSignal
-from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen,
+from PyQt6.QtCore import (QEasingCurve, QObject, QPointF, QRectF, QSize, Qt, QTimer, QVariantAnimation,
+                          pyqtSignal)
+from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
                          QRadialGradient)
 from PyQt6.QtWidgets import (QAbstractButton, QButtonGroup, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
                              QWidget)
@@ -316,11 +321,13 @@ class MoodTile(GlassRow):
 class MoodMap(QWidget):
     """Valence (x) vs energy (y): the current mood (white, gently pulsing), the target (tinted), the gap."""
 
-    MARGIN = 10
+    MARGIN = 8
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setFixedHeight(112)
+        self.setFixedSize(96, 72)  # small, at the side of the status line
+        self.setToolTip("Mood map: valence (sad → happy) across, energy up.\n"
+                        "White: how your music feels now. Coloured: the target.")
         self.mood: tuple[float, float] | None = None
         self.target: tuple[float, float] | None = None
         self.color = QColor(DEFAULT_TINT)
@@ -334,7 +341,7 @@ class MoodMap(QWidget):
         self.update()
 
     def area(self) -> QRectF:
-        return QRectF(self.rect()).adjusted(1, 1, -1, -14)
+        return QRectF(self.rect()).adjusted(1, 1, -1, -1)
 
     def to_px(self, pt) -> QPointF:
         a, m = self.area(), self.MARGIN
@@ -360,42 +367,32 @@ class MoodMap(QWidget):
         area = self.area()
         p.setPen(QPen(QColor(255, 255, 255, 46), 1))
         p.setBrush(QColor(255, 255, 255, 14))
-        p.drawRoundedRect(area, 12, 12)
-        p.setPen(QPen(QColor(255, 255, 255, 20), 1))
-        for k in range(1, 4):
-            x = area.left() + area.width() * k / 4
-            y = area.top() + area.height() * k / 4
-            p.drawLine(QPointF(x, area.top() + 4), QPointF(x, area.bottom() - 4))
-            p.drawLine(QPointF(area.left() + 4, y), QPointF(area.right() - 4, y))
-        p.setPen(QColor(255, 255, 255, 140))
-        p.setFont(ui_font(7.5, QFont.Weight.DemiBold))
-        p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "sad")
-        p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
-                   Qt.AlignmentFlag.AlignCenter, "valence →   ·   energy ↑")
-        p.drawText(QRectF(area.left(), area.bottom() + 1, area.width(), 13),
-                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "happy")
+        p.drawRoundedRect(area, 10, 10)
+        p.setPen(QPen(QColor(255, 255, 255, 22), 1))
+        x, y = area.center().x(), area.center().y()  # the four quadrants
+        p.drawLine(QPointF(x, area.top() + 4), QPointF(x, area.bottom() - 4))
+        p.drawLine(QPointF(area.left() + 4, y), QPointF(area.right() - 4, y))
 
         if self.target:
             t = self.to_px(self.target)
-            glow = QRadialGradient(t, 18)
+            glow = QRadialGradient(t, 13)
             c = QColor(self.color)
             c.setAlpha(150)
             glow.setColorAt(0, c)
             glow.setColorAt(1, QColor(c.red(), c.green(), c.blue(), 0))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(glow)
-            p.drawEllipse(t, 18, 18)
-            p.setPen(QPen(QColor(255, 255, 255, 200), 1.4))
+            p.drawEllipse(t, 13, 13)
+            p.setPen(QPen(QColor(255, 255, 255, 200), 1.2))
             p.setBrush(self.color)
-            p.drawEllipse(t, 5.5, 5.5)
+            p.drawEllipse(t, 4.5, 4.5)
         if self.mood:
             m = self.to_px(self.mood)
             if self.target:
                 p.setPen(QPen(QColor(255, 255, 255, 110), 1.2, Qt.PenStyle.DashLine))
                 p.drawLine(m, self.to_px(self.target))
             breath = 0.5 + 0.5 * math.sin(time.monotonic() * 2 * math.pi / 1.8)  # one breath every 1.8 s
-            r = 11 + 5 * breath
+            r = 8 + 4 * breath
             halo = QRadialGradient(m, r)
             halo.setColorAt(0, QColor(255, 255, 255, round(90 + 60 * breath)))
             halo.setColorAt(1, QColor(255, 255, 255, 0))
@@ -403,7 +400,7 @@ class MoodMap(QWidget):
             p.setBrush(halo)
             p.drawEllipse(m, r, r)
             p.setBrush(QColor("white"))
-            p.drawEllipse(m, 4.5, 4.5)
+            p.drawEllipse(m, 3.5, 3.5)
 
 
 
@@ -440,6 +437,200 @@ class IconButton(QAbstractButton):
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.glyph)
 
 
+class CoverLoader(QObject):
+    """Downloads album covers off the UI thread; keeps the last few in memory."""
+
+    loaded = pyqtSignal(str, QImage)
+    _done = pyqtSignal(str, QImage)
+    KEEP = 24
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self._cache: dict[str, QImage] = {}
+        self._pending: set[str] = set()
+        self._done.connect(self._store)
+
+    def get(self, url: str) -> QImage | None:
+        return self._cache.get(url)
+
+    def fetch(self, url: str) -> None:
+        if url in self._cache:
+            self.loaded.emit(url, self._cache[url])
+            return
+        if url in self._pending or not url.startswith(("https://", "http://")):
+            return
+        self._pending.add(url)
+
+        def run():
+            img = QImage()
+            try:
+                with urllib.request.urlopen(url, timeout=8) as r:
+                    img.loadFromData(r.read())
+            except Exception:
+                pass  # offline: the placeholder stays
+            self._done.emit(url, img)  # queued to the UI thread
+
+        threading.Thread(target=run, name="cover", daemon=True).start()
+
+    def _store(self, url: str, img: QImage) -> None:
+        self._pending.discard(url)
+        if img.isNull():
+            return
+        self._cache[url] = img
+        while len(self._cache) > self.KEEP:
+            self._cache.pop(next(iter(self._cache)))
+        self.loaded.emit(url, img)
+
+
+class CoverArt(QWidget):
+    """The album cover with rounded corners; cross-fades when the song changes."""
+
+    SIZE = 64
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.image: QImage | None = None
+        self.previous: QImage | None = None
+        self.mix = 1.0
+        self.accent = QColor(DEFAULT_TINT)
+        self._fade = fade(320, self._set_mix, self)
+
+    def _scaled(self, img: QImage | None) -> QImage | None:
+        if img is None or img.isNull():
+            return None
+        px = round(self.SIZE * self.devicePixelRatioF())
+        out = img.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                         Qt.TransformationMode.SmoothTransformation)
+        out.setDevicePixelRatio(self.devicePixelRatioF())
+        return out
+
+    def set_image(self, img: QImage | None) -> None:
+        img = self._scaled(img)
+        if img is None and self.image is None:
+            return
+        if img is not None and self.image is not None and img.cacheKey() == self.image.cacheKey():
+            return
+        self.previous, self.image = self.image, img
+        self._fade.stop()
+        if self.isVisible():
+            self.mix = 0.0
+            self._fade.start()
+        else:
+            self.mix = 1.0
+        self.update()
+
+    def _set_mix(self, value) -> None:
+        self.mix = float(value)
+        self.update()
+
+    def _draw(self, p: QPainter, img: QImage | None, opacity: float) -> None:
+        if opacity <= 0:
+            return
+        p.setOpacity(opacity)
+        r = QRectF(self.rect())
+        if img is None:  # placeholder: tinted glass with a note
+            g = QLinearGradient(r.topLeft(), r.bottomRight())
+            g.setColorAt(0, QColor(255, 255, 255, 40))
+            g.setColorAt(1, blend(QColor(255, 255, 255, 14), self.accent, 0.45))
+            p.fillRect(r, g)
+            p.setPen(QColor(255, 255, 255, 190))
+            p.setFont(ui_font(20, QFont.Weight.DemiBold))
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, "♪")
+        else:
+            w, h = img.width() / img.devicePixelRatio(), img.height() / img.devicePixelRatio()
+            p.drawImage(QRectF((r.width() - w) / 2, (r.height() - h) / 2, w, h), img)
+        p.setOpacity(1.0)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 12, 12)
+        p.setClipPath(path)
+        self._draw(p, self.previous, 1.0 - self.mix)
+        self._draw(p, self.image, self.mix)
+        p.setClipping(False)
+        p.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawPath(path)
+
+
+class MediaButton(QAbstractButton):
+    """Round player button with a drawn icon: "play", "pause" or "next". The play/pause one is solid."""
+
+    def __init__(self, kind: str, tip: str, solid: bool = False, size: int = 32, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.kind = kind
+        self.solid = solid
+        self.setFixedSize(size, size)
+        self.setToolTip(tip)
+        self.setAccessibleName(tip)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._hover = False
+
+    def set_kind(self, kind: str, tip: str) -> None:
+        if kind != self.kind:
+            self.kind = kind
+            self.setToolTip(tip)
+            self.setAccessibleName(tip)
+            self.update()
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        s = self.width()
+        shrink = 1.5 if self.isDown() else 0.0  # a little press
+        circle = QRectF(1 + shrink, 1 + shrink, s - 2 - 2 * shrink, s - 2 - 2 * shrink)
+        enabled = self.isEnabled()
+        if self.solid:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(255, 255, 255, (245 if self._hover else 225) if enabled else 90))
+            icon = QColor(34, 24, 32)
+        else:
+            p.setPen(QPen(QColor(255, 255, 255, 60), 1))
+            p.setBrush(QColor(255, 255, 255, 46 if self._hover and enabled else 20))
+            icon = QColor(255, 255, 255, 235 if enabled else 110)
+        p.drawEllipse(circle)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(icon)
+        c, u = circle.center(), circle.width() / 32  # icon unit
+        if self.kind == "pause":
+            for dx in (-4.2, 1.6):
+                p.drawRoundedRect(QRectF(c.x() + dx * u, c.y() - 6 * u, 2.8 * u, 12 * u), 1 * u, 1 * u)
+        elif self.kind == "play":
+            path = QPainterPath()
+            path.moveTo(c.x() - 3.6 * u, c.y() - 6.5 * u)
+            path.lineTo(c.x() + 6.4 * u, c.y())
+            path.lineTo(c.x() - 3.6 * u, c.y() + 6.5 * u)
+            path.closeSubpath()
+            p.drawPath(path)
+        else:  # next
+            path = QPainterPath()
+            path.moveTo(c.x() - 5.5 * u, c.y() - 5.5 * u)
+            path.lineTo(c.x() + 2.8 * u, c.y())
+            path.lineTo(c.x() - 5.5 * u, c.y() + 5.5 * u)
+            path.closeSubpath()
+            p.drawPath(path)
+            p.drawRoundedRect(QRectF(c.x() + 3.4 * u, c.y() - 5.5 * u, 2.4 * u, 11 * u), 1 * u, 1 * u)
+
+
+def clock_text(ms: float) -> str:
+    s = max(0, int(ms // 1000))
+    return f"{s // 60}:{s % 60:02d}"
+
+
 class Avatar(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -471,6 +662,7 @@ class SidebarPanel(QWidget):
     quitRequested = pyqtSignal()
     logoutRequested = pyqtSignal()
     tintChanged = pyqtSignal(QColor)
+    playerCommand = pyqtSignal(str)  # "play", "pause" or "next"
 
     def __init__(self, moods: Mapping[str, Mapping[str, Any]], parent: QWidget | None = None):
         super().__init__(parent)
@@ -480,6 +672,10 @@ class SidebarPanel(QWidget):
         self.moods = moods
         self.tint = QColor(DEFAULT_TINT)
         self._playback: tuple[float, float, bool, float] | None = None  # progress_ms, duration_ms, playing, at
+        self._pending_play: tuple[bool, float] | None = None  # a play/pause click Spotify hasn't confirmed yet
+        self._cover_url: str | None = None
+        self.covers = CoverLoader(self)
+        self.covers.loaded.connect(self._cover_loaded)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 22, 0, 16)
@@ -499,23 +695,56 @@ class SidebarPanel(QWidget):
         padded(Divider(), 0, 8)
 
         # Now playing.
-        padded(section_label("Now playing"), 0, 6)
+        padded(section_label("Now playing"), 0, 8)
+        self.cover = CoverArt()
         self.now_playing = QLabel("Nothing playing")
         self.now_playing.setObjectName("Song")
         self.artist = QLabel("")
         self.artist.setObjectName("Muted")
-        padded(self.now_playing)
-        padded(self.artist, 1, 7)
+        self.play_pause = MediaButton("play", "Play", solid=True, size=32)
+        self.next_song = MediaButton("next", "Next song", size=30)
+        self.play_pause.clicked.connect(self._toggle_play)
+        self.next_song.clicked.connect(lambda: self.playerCommand.emit("next"))
+        info = QVBoxLayout()
+        info.setSpacing(0)
+        info.addWidget(self.now_playing)
+        info.addWidget(self.artist)
+        info.addSpacing(6)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.addWidget(self.play_pause)
+        buttons.addWidget(self.next_song)
+        buttons.addStretch(1)
+        info.addLayout(buttons)
+        top = QHBoxLayout()
+        top.setContentsMargins(22, 0, 22, 10)
+        top.setSpacing(12)
+        top.addWidget(self.cover, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(info, 1)
+        root.addLayout(top)
+
         self.progress = ProgressBar()
-        padded(self.progress, 0, 10)
+        self.time = QLabel("")
+        self.time.setObjectName("Muted")
+        self.time.setStyleSheet("font-size: 10px;")
+        bar = QHBoxLayout()
+        bar.setContentsMargins(22, 0, 22, 10)
+        bar.setSpacing(10)
+        bar.addWidget(self.progress, 1, Qt.AlignmentFlag.AlignVCenter)
+        bar.addWidget(self.time)
+        root.addLayout(bar)
+
         self.map = MoodMap()
-        padded(self.map, 0, 4)
         self.details = QLabel("Waiting for the daemon…")
         self.details.setObjectName("Muted")
         self.details.setWordWrap(True)
-        self.details.setMinimumHeight(30)
-        self.details.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        padded(self.details, 0, 4)
+        self.details.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        status = QHBoxLayout()
+        status.setContentsMargins(22, 0, 22, 8)
+        status.setSpacing(12)
+        status.addWidget(self.details, 1)
+        status.addWidget(self.map, 0, Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(status)
         padded(Divider(), 0, 4)
 
         # Target moods.
@@ -620,6 +849,8 @@ class SidebarPanel(QWidget):
                 row.set_accent(self.tint)
             self.avatar.accent = self.tint
             self.avatar.update()
+            self.cover.accent = self.tint
+            self.cover.update()
             self.update()  # the selected pill is tinted too
             self.tintChanged.emit(self.tint)
 
@@ -725,22 +956,76 @@ class SidebarPanel(QWidget):
             self.now_playing.setText((state or {}).get("track") or "Nothing playing")
             self.artist.setText("")
         if state and state.get("duration_ms"):
-            self._playback = (float(state.get("progress_ms") or 0), float(state["duration_ms"]),
-                              bool(state.get("is_playing")), float(state.get("observed_at") or time.time()))
+            playing = bool(state.get("is_playing"))
+            observed = float(state.get("observed_at") or time.time())
+            duration = float(state["duration_ms"])
+            stale = False
+            if self._pending_play is not None:
+                clicked = self._pending_play[1]
+                # Spotify hasn't caught up with the click yet: keep showing what the click did.
+                stale = observed < clicked and time.time() - clicked < 3
+                if not stale:
+                    self._pending_play = None
+            if not (stale and self._playback is not None and self._playback[1] == duration):
+                if stale:
+                    playing = self._pending_play[0]
+                self._playback = (float(state.get("progress_ms") or 0), duration, playing, observed)
         else:
             self._playback = None
+        self._show_cover((state or {}).get("track_image") if name else None)
+        self._show_buttons()
         self._tick()
 
+    def _show_cover(self, url: str | None) -> None:
+        if url == self._cover_url:
+            return
+        self._cover_url = url
+        if not url:
+            self.cover.set_image(None)
+            return
+        cached = self.covers.get(url)
+        if cached is not None:
+            self.cover.set_image(cached)
+        else:
+            self.covers.fetch(url)  # the old cover stays until the new one arrives
+
+    def _cover_loaded(self, url: str, img: QImage) -> None:
+        if url == self._cover_url:
+            self.cover.set_image(img)
+
+    def _show_buttons(self) -> None:
+        has_track = self._playback is not None
+        playing = has_track and self._playback[2]
+        self.play_pause.set_kind("pause" if playing else "play", "Pause" if playing else "Play")
+        self.play_pause.setEnabled(has_track)
+        self.next_song.setEnabled(has_track)
+
+    def _toggle_play(self) -> None:
+        if self._playback is None:
+            return
+        progress, duration, playing, at = self._playback
+        now = time.time()
+        if playing:
+            progress += (now - at) * 1000  # freeze the bar where it is
+        self._playback = (progress, duration, not playing, now)
+        self._pending_play = (not playing, now)
+        self._show_buttons()
+        self._tick()
+        self.playerCommand.emit("pause" if playing else "play")
+
     def _set_elided(self, label: QLabel, text: str) -> None:
-        width = max(self.width() - 50, 200)
+        width = max(self.width() - 44 - CoverArt.SIZE - 12, 140)
         label.setText(QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight, width))
         label.setToolTip(text)
 
     def _tick(self) -> None:
         if self._playback is None:
             self.progress.set_fraction(0.0)
+            self.time.setText("")
             return
         progress, duration, playing, at = self._playback
         if playing:
             progress += (time.time() - at) * 1000
+        progress = min(progress, duration)
         self.progress.set_fraction(progress / duration if duration else 0.0)
+        self.time.setText(f"{clock_text(progress)} / {clock_text(duration)}")

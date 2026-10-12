@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -61,6 +62,8 @@ from shared.config_io import (DEFAULT_CONFIG_PATH, PROJECT_ROOT, atomic_write_js
                               load_config, resolve_path, target_point)
 
 log = logging.getLogger("daemon")
+
+PLAYER_COMMAND = "player.cmd"  # {"cmd": "play" | "pause" | "next"}, written by the sidebar
 
 
 class Daemon:
@@ -331,6 +334,7 @@ class Daemon:
             "track": f"{pb.track.artists} - {pb.track.name}" if pb else None,
             "track_name": pb.track.name if pb else None,
             "track_artists": pb.track.artists if pb else None,
+            "track_image": pb.track.image if pb else None,
             # The sidebar moves the progress bar itself from these (no need to write every second).
             "progress_ms": pb.progress_ms if pb else None,
             "duration_ms": pb.track.duration_ms if pb else None,
@@ -435,7 +439,52 @@ class Daemon:
 
         self._observer = Observer()
         self._observer.schedule(Handler(), str(target.parent), recursive=False)
+        if self.state_path is not None:
+            # The sidebar's play/pause/next buttons write data/player.cmd next to state.json.
+            command = self.player_command_path
+
+            class PlayerHandler(FileSystemEventHandler):
+                def on_any_event(self, event):
+                    paths = [event.src_path, getattr(event, "dest_path", None)]
+                    if any(p and Path(p).name == command.name for p in paths) and command.exists():
+                        daemon._loop.call_soon_threadsafe(daemon._spawn_player_command)
+
+            command.parent.mkdir(parents=True, exist_ok=True)
+            command.unlink(missing_ok=True)  # a click from before this start is stale
+            self._observer.schedule(PlayerHandler(), str(command.parent), recursive=False)
         self._observer.start()
+
+    @property
+    def player_command_path(self) -> Path:
+        return self.state_path.parent / PLAYER_COMMAND
+
+    def _spawn_player_command(self) -> None:
+        task = asyncio.ensure_future(self.player_command())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def player_command(self) -> None:
+        """Run the sidebar's play/pause/next on Spotify, then show the result at once."""
+        path = self.player_command_path
+        try:
+            cmd = json.loads(path.read_text(encoding="utf-8")).get("cmd")
+            path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            return  # gone already (handled), or still being written: the next event retries
+        action = {"play": self.client.resume, "pause": self.client.pause, "next": self.client.next_track}.get(cmd)
+        if action is None:
+            return
+        log.info("player: %s", cmd)
+        try:
+            await asyncio.to_thread(action)
+        except Exception as e:
+            log.warning("could not %s: %s", cmd, e)
+        # Spotify takes a moment to report the change; look twice so the sidebar follows at once.
+        for wait in (0.25, 0.6):
+            await self.clock.sleep(wait)
+            result = await self.inference.poll()
+            await self.handle_poll(result)
+            self.write_state(force=True)
 
     def _schedule_reload(self) -> None:
         # Editors and os.replace() fire several events per save; coalesce them.

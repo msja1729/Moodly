@@ -456,3 +456,30 @@ def test_mood_trace_records_cycles_songs_and_end_only_when_enabled(big_catalog, 
     assert all(len(a["point"]) == 2 and a["name"] for a in c["added"])
     assert len(c["window"]) >= 5 and all(w["point"] for w in c["window"])
     assert events[2]["mood"] == pytest.approx(list(s.mood), abs=1e-4)
+
+
+def test_sidebar_player_buttons_pause_resume_and_skip(tmp_config, big_catalog, clock):
+    client, songs = playing_client(big_catalog, clock, queued=3)
+    d, _ = TestDaemonSessionMode().make_daemon(tmp_config, client, big_catalog, clock)
+    cmd = d.player_command_path
+
+    def press(name):
+        cmd.write_text(json.dumps({"cmd": name}), encoding="utf-8")
+        asyncio.run(d.player_command())
+        assert not cmd.exists()  # handled once
+        return json.loads(d.state_path.read_text(encoding="utf-8"))
+
+    first = press("pause")
+    assert first["is_playing"] is False and first["track_name"]
+    assert press("play")["is_playing"] is True
+    after = press("next")
+    assert after["track_name"] != first["track_name"] and client.plays[-1] == (songs[0], True)  # a skip
+
+
+def test_cover_url_picks_the_300px_album_image():
+    from backend.spotify.client import _track_from_item
+    item = {"type": "track", "id": "x", "name": "n", "artists": [{"name": "a"}], "duration_ms": 1000,
+            "album": {"images": [{"url": "big", "width": 640}, {"url": "mid", "width": 300},
+                                 {"url": "small", "width": 64}]}}
+    t = _track_from_item(item)
+    assert t.image == "mid" and t == _track_from_item({**item, "album": {}})  # the image isn't part of identity

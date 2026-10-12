@@ -199,9 +199,9 @@ class TestSkipDetection:
         eng = self.engine(clock)
         a = make_track("a", 200)
         for progress in (0, 100, 150, 190):
-            assert eng.next_delay(pb(a, progress, 0)) == 3      # a skip shows within 3 s
-        assert eng.next_delay(pb(a, 199, 0)) == pytest.approx(1.4)  # just after the song ends
-        assert eng.next_delay(None) == 15
+            assert eng.next_delay(pb(a, progress, 0)) == 0.75   # a skip shows within a second
+        assert eng.next_delay(pb(a, 199.8, 0)) == pytest.approx(0.6)  # just after the song ends
+        assert eng.next_delay(None) == 2
 
     def test_rate_limit_backs_off(self, clock):
         class Limited:

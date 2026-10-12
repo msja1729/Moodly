@@ -31,8 +31,8 @@ class InferenceParams:
     ema_alpha: float = 0.3
     skip_weight: float = 0.3
     skip_threshold: float = 0.8
-    poll_min_s: float = 3.0     # while music plays: notice a skip or a new song within this
-    poll_max_s: float = 15.0    # paused / nothing playing
+    poll_min_s: float = 0.75    # while music plays: the sidebar shows a skip or a new song within this
+    poll_max_s: float = 2.0     # paused / nothing playing
     max_backoff_s: float = 600.0
 
     @classmethod

@@ -2,11 +2,11 @@
 
 Every change made after the original build (Phase 1, completed 2026-10-07, 85 tests). Each modification has a number and a title (M1 is the oldest). The most recent one is tagged **`🆕 LATEST`**. Requirements are in `SPEC.md.md`, open problems in `LOG.md`, the Phase 2 design in `PLAN.md` §7.
 
-**Latest:** M21 · Mood path trace and live plot, for testing (at the end, after the summary).
+**Latest:** M22 · Player controls, album cover, sync under 1 s, a simpler mood path view (at the end, after the summary).
 
 ---
 
-## Summary of earlier modifications (M1–M20)
+## Summary of earlier modifications (M1–M21)
 
 | # | Date | Title | Problem | Modification |
 |---|---|---|---|---|
@@ -30,29 +30,47 @@ Every change made after the original build (Phase 1, completed 2026-10-07, 85 te
 | M18 | 10-12 | **Real glass: transparent, blurred background, round corners** | Square edges and thick, opaque glass: the Windows Acrylic call painted black behind Qt's transparent window, in a full rectangle. | Acrylic call removed; a snapshot of the screen behind the sidebar is taken as it opens, blurred and drawn under thinner glass (tint alpha 125/80/70). Same on Windows and macOS; checked on screen. 229 tests. |
 | M19 | 10-12 | **Pointer effects** | The sidebar should react to the mouse like modern websites. | A light in the mood colour followed the pointer and the edge shone near it; rows: hover pill fade, inner light, icon nudge, click ripple; the selection slides between moods; mood map crosshair readout and breathing dot. 232 tests. |
 | M20 | 10-12 | **Waves instead of the pointer light, bolder text, no crosshair or window dots** | The pointer light was too bright and hid the text; the text should be bolder; the map crosshair and window dots weren't wanted. | Soft waves behind the text when the pointer moves (one per 38 px, fade over 1.6 s); `ui_font()` with heavier weights; crosshair, readout and window dots removed. 232 tests. |
+| M21 | 10-12 | **Mood path trace and live plot (testing)** | Wanted to see the mood move toward the target while listening. | Opt-in trace (`AMBIENT_MOOD_TRACE`) of every cycle/song change; a local web viewer (`tools/mood_trace_view.py`) plots it live. 233 tests. |
 
 ---
 
-## M21 · Mood path trace and live plot, for testing · 2026-10-12 · `🆕 LATEST`
+## M22 · Player controls, album cover, sync under 1 s, a simpler mood path view · 2026-10-12 · `🆕 LATEST`
 
-**Request:** while songs play, see the path of the mood toward the target, cycle by cycle, in a detailed and accurate plot. This is for testing only; users don't get it.
+**Request:**
+1. The mood path page was too detailed: it was hard to see which songs were picked and where the music is now.
+2. In the sidebar, show the song's cover and Play/Pause and Next buttons, with the mood map small and to the side. Keep the design and colours.
+3. Get the sidebar in sync in under 1 s (it was up to 3 s).
 
 **Modifications:**
-1. **Trace** (`backend/trace.py`, hooked into `PlaylistSession`):
-   - Off unless the environment variable `AMBIENT_MOOD_TRACE` names a file. The tray app passes its environment on to the daemon.
-   - Writes one JSON line per event:
-     - `cycle`: reason, target, mood (queue average), deviation, waypoint and Markov direction, settled / preparing / waiting-for-songs flags, queue size, every song in the window with its (valence, energy), and the songs added (point, position, `plan` or `keep music going`) and removed.
-     - `song`: a new song started, with the mood re-averaged at once.
-     - `end`: the session ended.
-   - A timer cycle that changed nothing is not written again.
-   - The values are the same numbers the session uses (no recomputation).
-2. **Live viewer** (`tools/mood_trace_view.py`, Python standard library only):
-   - Run with `python -m tools.mood_trace_view` and open http://127.0.0.1:8765. It re-reads the trace every 2 s.
-   - **Mood plane:** the 10×10 Markov grid, quadrant names and mood presets; the mood path numbered and coloured old to new, with arrows; song-change steps; waypoints, linked to the mood they started from; songs added; the target, with 0.05/0.1/0.2 rings; optionally the current queue's songs. Hover any point for its details.
-   - **Panels:** current stats (distance now and at the start, % closed, cycles, songs added and removed); distance to the target over time; valence and energy over time against the target; a step table with every song added and removed.
-   - Each session is shown separately and can be picked from a list.
-3. `data/mood_trace.jsonl` is git-ignored.
+1. **Sidebar Now Playing** (`frontend/components.py`):
+   - `CoverArt`: the album cover, 64 px with rounded corners. It cross-fades (320 ms) on a song change; a tinted glass placeholder with ♪ shows when there's no cover.
+   - `CoverLoader`: downloads covers in a background thread and keeps the last 24.
+   - `MediaButton`: drawn icons (not font glyphs). Play/Pause is a solid white circle and Next is a glass circle; both shrink a little when pressed and are disabled when nothing plays.
+   - A time readout next to the progress bar (1:23 / 4:49).
+   - The mood map is now 96×72 px beside the status line, with no axis labels (they're in its tooltip).
+2. **Player controls** (sidebar → daemon → Spotify):
+   - A click writes `data/player.cmd` (`{"cmd": "play" | "pause" | "next"}`).
+   - The daemon watches that folder, runs the command (`pause()` / `resume()` / `next_track()` on the client), then polls Spotify twice (after 0.25 s and 0.6 s) and writes the state at once.
+   - The sidebar flips the button and freezes or restarts the bar immediately. An older state that arrives before Spotify confirms doesn't undo the click (for up to 3 s).
+   - A stale command left over from before the daemon started is deleted.
+3. **Cover URL** (`backend/spotify/client.py`): `Track.image` is the album image closest to 300 px. It isn't part of the track's identity. The state now includes `track_image`.
+4. **Sync:** the daemon polls every 0.75 s while music plays (was 3 s) and every 2 s when paused (was 15 s), so a change shows in the sidebar within about a second.
+5. **Mood path page** (`tools/mood_trace_view.py`), rewritten for reading at a glance:
+   - **Right now:** a plain sentence ("Almost there. Your music is 0.08 away from Energized."), the song playing, the mood, the target, how the mood moved since the target was set, and a "% of the way" bar.
+   - **Up next:** the next 8 songs in order, each tagged *picked by Moodly* or *your queue*, with its point and whether it pulls toward the target.
+   - **Map:** "You are here", the target, one path line, the song playing now (named), and the next 6 songs as numbered dots (green = Moodly picked it).
+   - **What Moodly did:** a plain-language feed ("Aimed one step happier and more energetic and added: …"); removals fold away.
+   - **Show details:** brings back waypoints, every pick, the grid, and the valence/energy chart.
+   - Fixes: progress is measured from when the current target was set (was −771%), and picks are matched ignoring capitals. The page refreshes every second.
+6. **Docs:** SPEC (Now Playing, player, sync, performance), MANUAL (sketch, table, poll settings), `docs/sidebar-player.png`.
 
-**Checked:** a mock-Spotify run (calm target) plotted correctly: the mood went from (0.90, 0.95) toward (0.60, 0.25), and 64% of the distance was closed in 25 cycles.
+**Tests:** 237 pass. New:
+- the buttons write the command; the button changes at once; a stale state doesn't undo it; Next
+- the cover shows the downloaded image and falls back to the placeholder
+- the daemon handles pause, play and next (the mock records a skip) and deletes the command
+- the cover URL picks the 300 px image
+- poll delays 0.75 s / 2 s
 
-**Tests:** 233 pass. New: the trace is off by default; with it on, it records cycle, song and end events with points, waypoint and added songs, and skips a cycle that changed nothing.
+**Not done / limits:**
+- About 80 Spotify requests a minute while playing. Spotify slows the app down if it asks too often (429); the app already waits as told when that happens.
+- Covers need internet; offline, the placeholder shows.

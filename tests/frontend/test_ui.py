@@ -4,6 +4,7 @@ import time
 
 import pytest
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QSystemTrayIcon
 
 from frontend.app import MoodTrayApp, mood_icon
@@ -331,3 +332,44 @@ def test_mood_map_dot_breathes_only_while_shown(qtbot):
     assert not m.grab().isNull()
     m.hide()
     assert not m._pulse.isActive()
+
+
+def test_player_buttons_send_commands_and_follow_at_once(qtbot, tmp_config):
+    app = MoodTrayApp(tmp_config, tmp_config.parent / "state.json", poll_ms=60_000)
+    qtbot.addWidget(app.window)
+    panel = app.panel
+    assert not panel.play_pause.isEnabled()  # nothing playing yet
+    state = {"track_name": "Kesariya", "track_artists": "Pritam", "progress_ms": 60_000, "duration_ms": 240_000,
+             "is_playing": True, "observed_at": time.time(), "paused": True}
+    panel.show_state(state, "focused")
+    assert panel.play_pause.kind == "pause" and panel.time.text() == "1:00 / 4:00"
+    cmd = tmp_config.parent / "player.cmd"
+    panel.play_pause.click()
+    assert json.loads(cmd.read_text(encoding="utf-8"))["cmd"] == "pause"
+    assert panel.play_pause.kind == "play"  # at once, before Spotify answers
+    frozen = panel.progress.fraction
+    panel.show_state(state, "focused")  # an older state (still playing) arrives: the click wins
+    assert panel.play_pause.kind == "play"
+    time.sleep(0.05)
+    panel._tick()
+    assert panel.progress.fraction == frozen
+    panel.show_state({**state, "is_playing": False, "observed_at": time.time()}, "focused")
+    assert panel.play_pause.kind == "play" and panel._pending_play is None
+    panel.next_song.click()
+    assert json.loads(cmd.read_text(encoding="utf-8"))["cmd"] == "next"
+    app.timer.stop()
+    app.tray.hide()
+
+
+def test_cover_art_shows_the_album_image(qtbot):
+    from PyQt6.QtGui import QImage
+    panel = SidebarPanel({"focused": {"label": "Focused", "valence": 0.5, "energy": 0.45}})
+    qtbot.addWidget(panel)
+    img = QImage(300, 300, QImage.Format.Format_RGB32)
+    img.fill(QColor("#336699"))
+    panel.covers._store("https://i.scdn.co/image/abc", img)  # as if downloaded
+    panel.show_state({"track_name": "Song", "track_image": "https://i.scdn.co/image/abc", "duration_ms": 1000,
+                      "progress_ms": 0, "is_playing": False, "observed_at": time.time()}, "focused")
+    assert panel.cover.image is not None and panel.cover.image.pixelColor(10, 10) == QColor("#336699")
+    panel.show_state(None, "focused")
+    assert panel.cover.image is None  # placeholder

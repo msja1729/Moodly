@@ -33,8 +33,9 @@ from PyQt6.QtGui import (QAction, QColor, QCursor, QGuiApplication, QIcon, QLine
 from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon, QVBoxLayout, QWidget
 
 from frontend.components import DEFAULT_TINT, SidebarPanel, blend
-from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, ensure_app_home, load_config,
-                              resolve_path, set_paused, set_target_mood, start_new_session)
+from shared.config_io import (APP_HOME, DEFAULT_CONFIG_PATH, FROZEN, PROJECT_ROOT, atomic_write_json,
+                              ensure_app_home, load_config, resolve_path, set_paused, set_target_mood,
+                              start_new_session)
 
 log = logging.getLogger("ui")
 
@@ -297,6 +298,7 @@ class MoodTrayApp:
         self.panel.sessionNewRequested.connect(self.new_session)
         self.panel.quitRequested.connect(QApplication.quit)
         self.panel.logoutRequested.connect(self.log_out)
+        self.panel.playerCommand.connect(self.player_command)
         self.panel.set_account(account)
 
         self.tray = QSystemTrayIcon()
@@ -347,6 +349,13 @@ class MoodTrayApp:
         log.info("target mood -> %s (%.1f ms)", key, elapsed)
         self.refresh(reload=False)
         return elapsed
+
+    def player_command(self, cmd: str) -> None:
+        """Play/pause/next: the daemon (watching data/player.cmd) tells Spotify and updates the state."""
+        try:
+            atomic_write_json(self.state_path.parent / "player.cmd", {"cmd": cmd, "at": time.time()})
+        except OSError as e:
+            log.warning("could not send %s to the daemon: %s", cmd, e)
 
     # A session = the daemon managing the music. config "paused" = no session; "session_seq" = new session.
     def start_session(self) -> None:

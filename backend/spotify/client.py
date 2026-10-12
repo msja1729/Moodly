@@ -57,6 +57,7 @@ class Track:
     name: str
     artists: str
     duration_ms: int
+    image: str | None = field(default=None, compare=False)  # album cover URL (~300 px)
 
     @property
     def uri(self) -> str:
@@ -130,7 +131,18 @@ def _track_from_item(item: dict) -> Track | None:
         name=item.get("name", "?"),
         artists=", ".join(a["name"] for a in item.get("artists", [])),
         duration_ms=int(item.get("duration_ms") or 0),
+        image=_cover_url(item),
     )
+
+
+def _cover_url(item: dict, want_px: int = 300) -> str | None:
+    """The smallest album image at least `want_px` wide (Spotify lists 640, 300 and 64 px)."""
+    images = [im for im in (item.get("album") or {}).get("images") or [] if im.get("url")]
+    if not images:
+        return None
+    big = [im for im in images if (im.get("width") or 0) >= want_px]
+    pick = min(big, key=lambda im: im.get("width") or 0) if big else max(images, key=lambda im: im.get("width") or 0)
+    return pick["url"]
 
 
 class LiveSpotifyClient:
@@ -229,6 +241,16 @@ class LiveSpotifyClient:
 
     def set_shuffle(self, on: bool) -> None:
         self._call(self.sp.shuffle, on)
+
+    # -- player buttons in the sidebar ------------------------------------------
+    def pause(self) -> None:
+        self._call(self.sp.pause_playback)
+
+    def resume(self) -> None:
+        self._call(self.sp.start_playback)
+
+    def next_track(self) -> None:
+        self._call(self.sp.next_track)
 
     def delete_playlist(self, playlist_id: str, uri: str) -> None:
         """Spotify has no hard delete: unfollowing an owned playlist deletes it for the user.
@@ -438,6 +460,20 @@ class MockSpotifyClient:
         if self._paused_at is not None:
             self._started += self.clock.now() - self._paused_at
             self._paused_at = None
+
+    # The sidebar's player buttons.
+    def pause(self) -> None:
+        self.user_pause()
+
+    def resume(self) -> None:
+        self.user_resume()
+
+    def next_track(self) -> None:
+        """Skip: the current song ends now."""
+        self._advance()
+        if self._current is not None and self._paused_at is None:
+            self._current = _Play(self._current.track, max(0.0, self._progress_s()))
+            self._advance()
 
     def user_switch_context(self, track_ids: list[str]) -> None:
         """The user starts other music (e.g. an album) in Spotify."""

@@ -190,11 +190,13 @@ The two programs are independent: you can stop either one without affecting the 
 ```
 Ambient Mood
 NOW PLAYING
-  Song · artist · ▬▬▬▬───── progress
-  ┌───────────────────────────┐
-  │ mood map: ○ you ┄┄ ● target│
-  └───────────────────────────┘
-  0.21 from target · ~4 songs to go · 14 songs ahead
+  ┌──────┐  Song
+  │cover │  artist
+  └──────┘  (pause) (next)
+  ▬▬▬▬▬───────────── 1:23 / 4:49
+  0.21 from target · ~4      ┌────────┐
+  songs to go · 14 ahead     │○ ┄┄ ● │  small mood map
+                             └────────┘
 MOODS
   ◎ Focused
 ▌ ≈ Calm                     • ›   ← your target (pill); • = closest to how the music feels now
@@ -209,8 +211,9 @@ SESSION
 |---|---|
 | **Pointer effects** | Move the pointer over the sidebar and it leaves soft waves in the glass, behind the text, that spread out and fade. Rows light up as you hover them and ripple when clicked; the selection slides to the mood you pick. The white dot on the mood map breathes gently. |
 | **Glass colour** | Follows how your music feels right now: amber when happy and energetic, rose when tense, violet when sad, teal when calm (blends in between). It glides as your mood moves. |
-| **Now playing** | The song, the artist and a live progress bar. They change the moment the song changes (within ~3 s of a skip). |
-| **Mood map** | The white dot is your current mood. The coloured dot is the target. The dashed line is the distance still to go. |
+| **Now playing** | The album cover, the song, the artist and a live progress bar with the time. They change within a second of a song change. |
+| **Play/Pause, Next** | Control Spotify right from the sidebar. The button changes at once; Spotify follows within about half a second. Next counts as a skip. |
+| **Mood map** (small, beside the status line) | The white dot is your current mood. The coloured dot is the target. The dashed line is the distance still to go. |
 | **Status line** | The distance to the target, roughly how many songs it will take, the screen temperature, and the session's songs ahead / last changes (or a note such as "Preparing songs for you…"). |
 | **Mood rows** | Click one to set your target. Within a second, the themes switch and the screen starts moving toward that mood's temperature. |
 | **Start session** | Shown when no session runs (always at launch). Starts a session: themes and screen follow the target, and the app first prepares a pool of songs for you (your taste, your top-2 languages, the target mood). While it prepares, nothing is added to your music; your own queue keeps playing. Once the pool is ready, it starts adding songs. |
@@ -296,7 +299,7 @@ Edit `config/config.json` in any text editor. Changes to the **target mood** or 
 | `markov.gamma` | `20.0` | Higher means the app prefers straight steps over diagonal ones |
 | `inference.ema_alpha` | `0.3` | How much each new song moves your mood estimate (0–1) |
 | `inference.skip_threshold` | `0.8` | A track counts as skipped if you heard less than this fraction of it |
-| `inference.poll_min_s` / `poll_max_s` | `30` / `60` | How often Spotify is checked |
+| `inference.poll_min_s` / `poll_max_s` | `0.75` / `2` | How often Spotify is checked |
 | `display.enabled` | `true` | Set to `false` to never touch the screen color |
 | `display.step_kelvin` / `step_interval_s` | `100` / `60` | How fast the screen temperature changes |
 | `workspace.enabled` | `true` | Set to `false` to never touch your themes |
