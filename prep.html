@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moodly Interview Prep</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Manrope:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; a clickable system map up top, then one card per part of the app, in the order data flows. */
+:root{
+  --bg:#f5f6f8; --surface:#ffffff; --fg:#1b1f2a; --muted:#5b6275; --line:#dde1ea;
+  --accent:#3b5bdb; --accent-soft:#e7ecfd;
+  --amber:#c9781a; --rose:#c2456a; --violet:#7a5cd6; --teal:#1f8f7a;
+  --code-bg:#eef0f5; --ok:#1f8f6a;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Manrope", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12141b; --surface:#1a1d27; --fg:#e8eaf1; --muted:#9aa1b5; --line:#2c3040;
+  --accent:#8ea4ff; --accent-soft:#232a45;
+  --amber:#f2a541; --rose:#f07a9c; --violet:#ab95ff; --teal:#4fc1a6;
+  --code-bg:#232634; --ok:#4fc19a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12141b; --surface:#1a1d27; --fg:#e8eaf1; --muted:#9aa1b5; --line:#2c3040;
+  --accent:#8ea4ff; --accent-soft:#232a45;
+  --amber:#f2a541; --rose:#f07a9c; --violet:#ab95ff; --teal:#4fc1a6;
+  --code-bg:#232634; --ok:#4fc19a; color-scheme:dark}
+
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding-block:32px 80px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));
+  display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,2.8rem);font-weight:800}
+h2{font-size:1.5rem;font-weight:800}
+h3{font-size:1.05rem;font-weight:600}
+p{margin:0}
+a{color:var(--accent)}
+code,.mono{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px}
+.eyebrow{font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.lead{color:var(--muted);max-width:65ch}
+.hero{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:.8rem;border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--muted);background:var(--surface)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.pitch{border-left:4px solid var(--accent)}
+.pitch blockquote{margin:0;font-size:1.05rem;max-width:65ch}
+
+.map{overflow-x:auto}
+.map svg{width:100%;min-width:620px;height:auto;display:block}
+.map .box rect{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.map .box:hover rect,.map .box:focus rect{stroke:var(--accent);stroke-width:2.5}
+.map .box text{fill:var(--fg);font-family:var(--f-body);font-size:13px;font-weight:700}
+.map .box .sub{fill:var(--muted);font-weight:500;font-size:11px}
+.map .arrow{stroke:var(--muted);stroke-width:1.5;fill:none}
+.map .lbl{fill:var(--muted);font-family:var(--f-body);font-size:10.5px}
+.map .head{fill:var(--muted)}
+.map a:focus{outline:none}
+
+.sec{scroll-margin-top:16px}
+.sec .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.tag{font-family:var(--f-mono);font-size:.75rem;color:var(--muted)}
+.what,.why{max-width:68ch}
+.why{background:var(--accent-soft);border-radius:10px;padding:12px 14px}
+.why b{font-weight:700}
+.formula{font-family:var(--f-mono);font-size:.85rem;background:var(--code-bg);border-radius:8px;padding:12px 14px;overflow-x:auto;white-space:pre;line-height:1.5}
+
+.qs{display:flex;flex-direction:column;gap:8px}
+details{border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+details[open]{background:var(--surface)}
+summary{cursor:pointer;padding:11px 14px;font-weight:700;list-style:none;display:flex;gap:10px;align-items:flex-start}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"Q";font-family:var(--f-mono);font-size:.75rem;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:0 5px;margin-top:3px;flex:none}
+details.known summary::before{content:"✓";color:var(--ok);border-color:var(--ok)}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:10px}
+.ans{padding:0 14px 14px 44px;display:flex;flex-direction:column;gap:10px;color:var(--fg)}
+.ans p{max-width:65ch}
+.know{align-self:flex-start;font:inherit;font-size:.8rem;font-weight:700;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:3px 12px;cursor:pointer}
+details.known .know{color:var(--ok);border-color:var(--ok)}
+
+.bar{position:sticky;top:env(safe-area-inset-top, 0px);z-index:5;background:var(--bg);padding-block:10px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;border-bottom:1px solid var(--line)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top, 0px);z-index:10;background:var(--bg)}
+.btn{font:inherit;font-weight:700;font-size:.9rem;border:1px solid var(--accent);background:var(--accent);color:var(--surface);border-radius:8px;padding:6px 14px;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn:focus-visible,.know:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.progress{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:700;margin-left:auto}
+
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+td,th{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}
+th{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl{overflow-x:auto}
+ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:68ch}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Interview prep · Applied DS &amp; AI · Ch. 13 SDD</span>
+  <h1>Moodly (Ambient Mood Regulator)</h1>
+  <p class="lead">Go top to bottom. Learn the pitch, click through the map, then answer each question out loud <b>before</b> you open it. Mark the ones you can answer. Your marks stay in this browser.</p>
+  <div class="chips">
+    <span class="chip">Release v0.4.0 · Windows .exe + Mac .dmg</span>
+    <span class="chip">Python 3.13 · PyQt6 · NumPy · SQLite</span>
+    <span class="chip">~8.3k lines of app code</span>
+    <span class="chip">261 automated tests</span>
+    <span class="chip">33 logged changes (M1–M33)</span>
+  </div>
+</header>
+
+<div class="bar">
+  <button class="btn" id="randomQ" type="button">Random question</button>
+  <button class="btn ghost" id="closeAll" type="button">Close all answers</button>
+  <span class="progress" id="progress">0 / 0 ready</span>
+</div>
+
+<section class="panel pitch" id="pitch">
+  <span class="eyebrow">Learn this word for word · 45 seconds</span>
+  <blockquote>“Moodly is a desktop app that slowly steers your mood through your music. Every Spotify song is a point in a 2D mood space: <b>valence</b> (how positive it sounds) against <b>energy</b>. Your current mood is the average of what you're listening to. You pick a target mood (Focused, Calm, Energized or Wind Down). A <b>Markov chain</b> over that space picks the next small step toward the target. Moodly then finds songs at that step that also fit musically and match your taste and languages, and puts them into a private session playlist that plays without a gap. It also changes your VS Code theme and screen warmth. I built it spec-first with Claude Code: a written SPEC, a reviewed PLAN, tests for every acceptance criterion, and a change log for every modification.”</blockquote>
+  <p class="lead">If they ask “why does it matter?”: it applies the <b>iso principle</b> from music therapy. You start where the listener is and change the music gradually, not with a sudden jump.</p>
+</section>
+
+<section class="panel" id="map">
+  <div>
+    <span class="eyebrow">System map · click a box</span>
+    <h2>How the parts connect</h2>
+  </div>
+  <div class="map">
+  <svg viewBox="0 0 760 390" role="img" aria-label="Moodly architecture: Spotify feeds inference, mood and Markov chain, selection and the session playlist; tray UI talks to the daemon through config and state files.">
+    <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <!-- arrows -->
+    <path class="arrow" d="M85 82 V148" marker-end="url(#ah)"/>
+    <text class="lbl" x="92" y="120">your token</text>
+    <path class="arrow" d="M432 50 H498" marker-end="url(#ah)" marker-start="url(#ah)"/>
+    <path class="arrow" d="M560 82 L400 148" marker-end="url(#ah)"/>
+    <text class="lbl" x="490" y="122">target mood</text>
+    <path class="arrow" d="M150 182 H165" marker-end="url(#ah)"/>
+    <path class="arrow" d="M297 182 H312" marker-end="url(#ah)"/>
+    <path class="arrow" d="M444 182 H459" marker-end="url(#ah)"/>
+    <path class="arrow" d="M591 182 H606" marker-end="url(#ah)"/>
+    <path class="arrow" d="M674 216 V250 H85 V218" marker-end="url(#ah)"/>
+    <text class="lbl" x="300" y="244">Spotify plays the edited playlist</text>
+    <path class="arrow" d="M527 290 V218" marker-end="url(#ah)"/>
+    <text class="lbl" x="533" y="275">song pool</text>
+    <path class="arrow" d="M232 216 V288" marker-end="url(#ah)"/>
+    <text class="lbl" x="238" y="275">plays, skips</text>
+    <path class="arrow" d="M620 82 V100 H740 V380 H90 V352" marker-end="url(#ah)"/>
+    <text class="lbl" x="600" y="374">target mood → theme, kelvin</text>
+
+    <a href="#sec-auth"><g class="box"><rect x="20" y="20" width="130" height="62" rx="10"/><text x="32" y="46">Accounts</text><text class="sub" x="32" y="66">PKCE · Premium</text></g></a>
+    <a href="#sec-ui"><g class="box"><rect x="250" y="20" width="182" height="62" rx="10"/><text x="262" y="46">Tray sidebar (PyQt6)</text><text class="sub" x="262" y="66">mood tiles · sessions</text></g></a>
+    <a href="#sec-ipc"><g class="box"><rect x="500" y="20" width="240" height="62" rx="10"/><text x="512" y="46">config.json / state.json</text><text class="sub" x="512" y="66">file IPC + file watcher</text></g></a>
+
+    <a href="#sec-spotify"><g class="box"><rect x="20" y="150" width="130" height="66" rx="10"/><text x="32" y="177">Spotify</text><text class="sub" x="32" y="197">playback · queue</text></g></a>
+    <a href="#sec-inference"><g class="box"><rect x="167" y="150" width="130" height="66" rx="10"/><text x="179" y="177">Inference</text><text class="sub" x="179" y="197">poll · skip · features</text></g></a>
+    <a href="#sec-markov"><g class="box"><rect x="314" y="150" width="130" height="66" rx="10"/><text x="326" y="177">Mood + Markov</text><text class="sub" x="326" y="197">next waypoint</text></g></a>
+    <a href="#sec-select"><g class="box"><rect x="461" y="150" width="130" height="66" rx="10"/><text x="473" y="177">Selection</text><text class="sub" x="473" y="197">score · MMR · remove</text></g></a>
+    <a href="#sec-playlist"><g class="box"><rect x="608" y="150" width="132" height="66" rx="10"/><text x="620" y="177">Session playlist</text><text class="sub" x="620" y="197">insert · resync</text></g></a>
+
+    <a href="#sec-actuators"><g class="box"><rect x="20" y="290" width="140" height="62" rx="10"/><text x="32" y="316">Themes + screen</text><text class="sub" x="32" y="336">JSONC · gamma ramp</text></g></a>
+    <a href="#sec-feedback"><g class="box"><rect x="167" y="290" width="130" height="62" rx="10"/><text x="179" y="316">Feedback log</text><text class="sub" x="179" y="336">SQLite · skip rates</text></g></a>
+    <a href="#sec-reco"><g class="box"><rect x="461" y="290" width="132" height="62" rx="10"/><text x="473" y="316">Recommender</text><text class="sub" x="473" y="336">taste · 2 languages</text></g></a>
+  </svg>
+  </div>
+  <p class="lead">Two processes: the <b>tray app</b> (what you see) and the <b>daemon</b> (all the logic, headless). They only talk through two JSON files.</p>
+</section>
+
+<!-- ============ 1 MOOD + MARKOV ============ -->
+<section class="panel sec" id="sec-markov">
+  <div class="top"><h2><span class="dot" style="background:var(--accent)"></span>Mood space and the Markov chain</h2><span class="tag">backend/mood_space.py · selection.py</span></div>
+  <p class="what"><b>What:</b> Mood is a point (valence, energy) in the unit square [0,1]². Valence and energy come from each song's audio features. The square is cut into a <b>10 × 10 grid</b>. Each cell is a state. From any cell, the chain may only move to a <b>neighbouring cell that is strictly closer to the target</b>. The target cell is absorbing (probability 1 of staying).</p>
+  <div class="formula">P[i → j] ∝ exp(−β · d(cⱼ, target))     pull toward the target   (β = 6)
+         × exp(−γ · d(cᵢ, cⱼ)²)        penalty for big jumps     (γ = 20)
+         × w_skip(direction)           learned from your skips
+
+w_skip = 2(1 + completions) / (2 + completions + skips)   ← Beta(1,1) prior, unseen = 1.0</div>
+  <p class="what"><b>Three points you must not mix up:</b></p>
+  <ul class="tight">
+    <li><b>Mood m</b>: the average of the last 3 songs you heard (not skipped), the song playing, and your own songs ahead (up to 20). Moodly's picks only count once they play.</li>
+    <li><b>Heading h</b>: the average of the whole upcoming window, Moodly's picks included.</li>
+    <li><b>Waypoint w</b>: one Markov step from h toward the target t. New songs are searched near w.</li>
+  </ul>
+  <p class="why"><b>Why a Markov chain?</b> The spec required it (“simple genre swapping is forbidden”). It also gives small, monotone steps that never move away from the target. β and γ are easy to tune, and the skip weight lets your behaviour reshape the path.</p>
+  <div class="qs">
+    <details><summary>Why is the current mood an average of songs, not one song?</summary><div class="ans"><p>One song is noisy. A shuffle can throw in one sad song between happy ones. Averaging the recent and upcoming window gives a stable estimate. Moodly's own picks are left out until they actually play, so the app can't “cheat” by queueing songs and calling that progress.</p></div></details>
+    <details><summary>What do β and γ do? What happens if you make them bigger?</summary><div class="ans"><p>β is the pull toward the target. Bigger β means the chain prefers the neighbour closest to the target, so steps become almost deterministic. γ penalises long jumps (a diagonal step is longer than a straight one). Bigger γ means more straight, small steps and smoother transitions.</p></div></details>
+    <details><summary>Why only neighbours that are strictly closer to the target?</summary><div class="ans"><p>It guarantees progress. Every step reduces the distance, so the chain can never go backwards or loop. It always ends in the target cell, which is absorbing. On a grid every non-target cell has at least one closer neighbour, so no state is a dead end.</p></div></details>
+    <details><summary>How do skips change the chain?</summary><div class="ans"><p>For each of the 8 directions I count completions and skips of songs that moved in that direction. The weight is the Beta posterior mean 2(1+c)/(2+c+s). With no data it is 1, so nothing changes. If you keep skipping songs in a direction, that direction's probability falls.</p></div></details>
+    <details><summary>Why separate the “mood” and the “heading”?</summary><div class="ans"><p>The mood is what you've actually heard. The heading is where the whole queue is going, including songs Moodly already added. If I only used the mood, every cycle would aim at the same step and add the same kind of song again. Using the heading makes each new pick go one step further, like a staircase.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 2 SELECTION ============ -->
+<section class="panel sec" id="sec-select">
+  <div class="top"><h2><span class="dot" style="background:var(--amber)"></span>Picking, placing and removing songs</h2><span class="tag">backend/selection.py (pure functions)</span></div>
+  <p class="what"><b>What:</b> Each cycle (on a song change, a target change, or every ~90 s), candidates must be <b>closer to the target than both the mood and the heading</b>. They are searched within a radius of the waypoint, then ranked by a score where <b>lower is better</b>:</p>
+  <div class="formula">score = distance to waypoint
+      + w_tempo·tempo gap (half/double time counts as close)
+      + w_key·key gap (Camelot wheel)
+      + w_loudness·loudness gap + w_feel·(danceability, acousticness gap)
+      − 0.12·taste − 0.03·freshness</div>
+  <p class="what">Then <b>MMR</b> (Maximal Marginal Relevance, λ = 0.7) chooses a varied set: no near-duplicates, no repeated artist. Songs go in at <b>random positions in the middle</b> of the queue (never now playing or next). The <b>only removal rule</b>: drop upcoming songs far from <b>both</b> the mood and the target (radius 0.35), with a cap per cycle (up to 5 right after a new target).</p>
+  <p class="why"><b>Why “musical fit”?</b> A song can be at the right mood point and still feel jarring (a 70 BPM ballad after a 140 BPM track, a clashing key). Tempo, Camelot key and loudness keep transitions smooth, like a DJ would.</p>
+  <div class="qs">
+    <details><summary>What is MMR and why use it?</summary><div class="ans"><p>Maximal Marginal Relevance picks items one at a time. Each time it balances how good a song is (relevance) against how similar it is to songs already picked. λ = 0.7 means 70% relevance, 30% diversity. Without it you'd get five near-identical songs from the same artist.</p></div></details>
+    <details><summary>What is the Camelot wheel?</summary><div class="ans"><p>A DJ's map of the 24 musical keys arranged in a circle. Neighbours on the wheel (same number, or ±1) mix harmonically. I measure key distance as steps on that wheel, so compatible keys score as close.</p></div></details>
+    <details><summary>Why random insertion positions, if “path” order converges faster?</summary><div class="ans"><p>It's a trade-off I chose on purpose. Random positions mean you hear new songs soon. In simulation the path order converges faster (0.59 → 0.04 in 3 h, against 0.59 → 0.19 in 4 h for random). Both modes exist in config (<code>session.insert_mode</code>). The path mode inserts at the gap with the cheapest cost T(a,c) + T(c,b) − T(a,b).</p></div></details>
+    <details><summary>Why must a pick be closer to the target than the mood?</summary><div class="ans"><p>The mood is an average. Adding a song further from the target than the average would pull the average away. Only songs strictly closer can move it the right way.</p></div></details>
+    <details><summary>Which songs are never removed?</summary><div class="ans"><p>The song playing, the next one, podcasts, and songs you added yourself with Spotify's “Add to queue”. Songs are matched by title + artists, because Spotify gives the same song different IDs in different countries (relinking).</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 3 PLAYLIST ============ -->
+<section class="panel sec" id="sec-playlist">
+  <div class="top"><h2><span class="dot" style="background:var(--rose)"></span>The session playlist trick</h2><span class="tag">backend/actuators/session.py</span></div>
+  <p class="what"><b>The problem:</b> Spotify's Web API can only <b>append</b> to the play queue. It can't insert at a position or remove anything.</p>
+  <p class="what"><b>The fix:</b> at Start session, Moodly creates a private playlist “Ambient Mood session” from the song playing and your queue, then plays it <b>from the same song at the same millisecond</b>. Playlists can be edited at any position. At the end, only the current song keeps playing, and the playlist is emptied and deleted.</p>
+  <p class="why"><b>A bug found only in live tests:</b> Spotify plays a <b>snapshot</b> of the playlist, so edits didn't show up. Fix: after each change, replay the playlist from the same song and moment. Later bug: replaying “at position N” cut songs after a second, because Spotify's count was ahead of the API. Fix: name the song itself, not its position (M27).</p>
+  <div class="qs">
+    <details><summary>Why not just add songs to the user's queue?</summary><div class="ans"><p>That was Phase 1. But append-only means you can't place songs in between or remove songs that pull the mood the wrong way. The playlist gives full control, while the music never stops.</p></div></details>
+    <details><summary>What if the user starts other music during a session?</summary><div class="ans"><p>Moodly stops managing and says so in the sidebar. It doesn't fight the user and never pauses playback. There's a 20-second grace period after hand-over, and one odd reading isn't treated as a takeover. That fixed a bug where sessions ended a second after starting (M9).</p></div></details>
+    <details><summary>What happens if the app crashes mid-session?</summary><div class="ans"><p>The leftover playlist is found and deleted on the next start. The tray app also owns the daemon and stops it cleanly, and the installer asks the app to quit before uninstalling.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 4 INFERENCE ============ -->
+<section class="panel sec" id="sec-inference">
+  <div class="top"><h2><span class="dot" style="background:var(--teal)"></span>Inference: polling, skips, audio features</h2><span class="tag">backend/inference.py · features.py</span></div>
+  <p class="what"><b>What:</b> the daemon polls Spotify every <b>0.75 s</b> while music plays (2 s when paused), with back-off on HTTP 429. When the song changes, it estimates how far the old song got. Under <b>80%</b> of its length counts as a skip.</p>
+  <p class="why"><b>Big obstacle:</b> Spotify turned off <code>/audio-features</code> for new apps in November 2024 (it returns 403). So features come from a <b>fallback chain</b>: Spotify → ReccoBeats → local CSV dataset → a 30-second iTunes preview analysed by ReccoBeats. Every result is cached in SQLite.</p>
+  <div class="qs">
+    <details><summary>How do you detect a skip if Spotify doesn't tell you?</summary><div class="ans"><p>A heuristic. When the track ID changes, the old song's progress = its last seen progress + time since that poll (clamped to the gap between the two polls). If that's under 80% of its duration, it's a skip.</p></div></details>
+    <details><summary>What design pattern is the feature chain?</summary><div class="ans"><p>Chain of responsibility with caching. Each provider has the same interface. If one has no answer, the next is tried. Nothing is looked up twice.</p></div></details>
+    <details><summary>What are valence and energy?</summary><div class="ans"><p>Spotify-style audio features from 0 to 1. Valence = how positive or happy the music sounds. Energy = intensity and activity. Together they match Russell's circumplex model of emotion (pleasure vs arousal), which is why I used them as the two axes.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 5 RECOMMENDER ============ -->
+<section class="panel sec" id="sec-reco">
+  <div class="top"><h2><span class="dot" style="background:var(--violet)"></span>Recommender: taste + top-2 languages</h2><span class="tag">recommender/ (Phase 3)</span></div>
+  <p class="what"><b>What:</b> builds a live <b>song pool</b> per session. Taste comes from your Spotify top tracks (4 weeks and 6 months, weighted by rank) plus plays and skips in Moodly. Candidates are songs by your favourite artists and their <b>Deezer related artists</b>, including the last two years' releases. Only songs in your <b>top-2 languages</b> are kept (second language only if ≥ 15% share). A session adds nothing until the pool has <b>15 useful songs</b> (max 10 minutes).</p>
+  <p class="why"><b>Why?</b> The first version picked from a 2022 dataset by mood only. You got random songs in random languages. For an Indian listener (Telugu 52%, Hindi 33% in my live test) that felt wrong.</p>
+  <div class="qs">
+    <details><summary>Spotify gives no language. How do you find a song's language?</summary><div class="ans"><p>In order of trust: (1) a marker in the title or album like <code>[TELUGU]</code>, (2) native script in the title, album or artist, (3) the script of the lyrics from LRCLIB, (4) common words in romanized lyrics, (5) the artist's usual language (≥ 2 known songs, ≥ 70% one language). Otherwise unknown and not used.</p></div></details>
+    <details><summary>Why does the marker beat the lyrics?</summary><div class="ans"><p>Dubbed film songs. KGF 2's Telugu version returned Tamil lyrics from LRCLIB. The title marker <code>[TELUGU]</code> is more reliable, so it wins. That case is a test.</p></div></details>
+    <details><summary>Why wait for 15 songs before adding anything?</summary><div class="ans"><p>Before this, when the pool was empty, random catalog songs in any language got added. Waiting until enough good songs exist is better. To keep music going, if fewer than 2 songs are left ahead, it still adds (pool, then your songs, then the catalog).</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 6 IPC / UI ============ -->
+<section class="panel sec" id="sec-ipc">
+  <div class="top"><h2><span class="dot" style="background:var(--muted)"></span>Two processes talking through files</h2><span class="tag">shared/config_io.py</span></div>
+  <p class="what"><b>What:</b> the UI writes the target mood and session flags to <code>config.json</code>. The daemon's <b>file watcher</b> sees it within ~50 ms. The daemon writes the live mood, song and queue to <code>state.json</code>, and the UI watches that. Writes are <b>atomic</b>: write a temp file, then <code>os.replace</code>.</p>
+  <p class="why"><b>Why files and not sockets?</b> The spec asked for it. It's simple, easy to debug (you can open the file), and if the UI crashes the daemon keeps going. Atomic replace means a reader never sees half a file.</p>
+  <div class="qs">
+    <details><summary>What would break without the atomic write?</summary><div class="ans"><p>The reader could open the file while it's half written and get invalid JSON, or wrong values. <code>os.replace</code> swaps the whole file in one step.</p></div></details>
+    <details><summary>How did you fix the sidebar lag?</summary><div class="ans"><p>(M17, M28) Faster polling while playing, re-average the mood right away on a song change, write <code>state.json</code> immediately when something visible changes, and run the slow session steps in a background thread so polling never waits. The spec target is under 1 second.</p></div></details>
+  </div>
+</section>
+
+<section class="panel sec" id="sec-ui">
+  <div class="top"><h2><span class="dot" style="background:var(--amber)"></span>The tray sidebar</h2><span class="tag">frontend/ (PyQt6)</span></div>
+  <p class="what"><b>What:</b> a tray icon opens a frameless glass sidebar: now playing, a small mood map, the four mood rows, Start/End/New session, and the account. The glass is tinted by the current mood: amber = happy and energetic, rose = tense, violet = sad, teal = calm.</p>
+  <div class="qs">
+    <details><summary>Why PyQt6 and not Tkinter?</summary><div class="ans"><p>Native tray icon (<code>QSystemTrayIcon</code>), frameless transparent windows, and <code>pytest-qt</code> so UI clicks are tested automatically (each click must update <code>config.json</code> in under 100 ms).</p></div></details>
+    <details><summary>How is the blur done?</summary><div class="ans"><p>When the sidebar opens it takes a snapshot of the screen behind it and blurs that. Windows' Acrylic API painted black behind Qt's transparent windows, so I dropped it. Downside: a moving video behind it isn't updated until you reopen.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 7 AUTH ============ -->
+<section class="panel sec" id="sec-auth">
+  <div class="top"><h2><span class="dot" style="background:var(--teal)"></span>Accounts and security</h2><span class="tag">backend/spotify/auth.py</span></div>
+  <p class="what"><b>What:</b> sign-in uses <b>OAuth Authorization Code + PKCE</b>. The app ships <b>no client secret</b>, only the public Client ID. Tokens are stored only on the user's computer, and only for <b>Premium</b> accounts (Spotify only lets Premium accounts control playback).</p>
+  <div class="qs">
+    <details><summary>What is PKCE and why use it?</summary><div class="ans"><p>The app makes a random <i>code verifier</i> and sends only its SHA-256 hash (<i>code challenge</i>, S256) in the sign-in URL. When it swaps the code for a token, it sends the verifier. Only the app that started the sign-in can finish it. A desktop app can't keep a secret safe, so PKCE removes the need for one.</p></div></details>
+    <details><summary>Can anyone download it and use it?</summary><div class="ans"><p>Not yet. The Spotify app is in Development mode: only 5 allow-listed users, and the owner needs Premium. Opening it to everyone needs Spotify's extended quota, which is for organizations. This is the biggest limit and it's Spotify policy, not code.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ 8 ACTUATORS ============ -->
+<section class="panel sec" id="sec-actuators">
+  <div class="top"><h2><span class="dot" style="background:var(--rose)"></span>Themes and screen warmth</h2><span class="tag">backend/actuators/workspace.py · display.py</span></div>
+  <p class="what"><b>What:</b> each mood has a VS Code theme, a Windows Terminal scheme and a Kelvin value (Energized 6500 K → Wind Down 3500 K). The screen moves <b>100 K per minute</b> using Win32 <code>SetDeviceGammaRamp</code>.</p>
+  <div class="qs">
+    <details><summary>Why not just json.load and json.dump the VS Code settings?</summary><div class="ans"><p>VS Code's settings are JSONC: comments and trailing commas. A normal round trip deletes the user's comments. I edit only the one value in the original text (a surgical edit), then write atomically. It's tested with comments, trailing commas, BOM and CRLF.</p></div></details>
+    <details><summary>Why can't Wind Down reach 3500 K on some PCs?</summary><div class="ans"><p>Windows rejects gamma ramps warmer than about 3400–4000 K by default. The app detects that and stops at the warmest accepted value. A registry setting unlocks the full range (in the README).</p></div></details>
+  </div>
+</section>
+
+<section class="panel sec" id="sec-feedback">
+  <div class="top"><h2><span class="dot" style="background:var(--violet)"></span>Feedback log</h2><span class="tag">backend/feedback.py</span></div>
+  <p class="what"><b>What:</b> every song change is logged to SQLite: time, mood vector, intervention type, skipped or not. Skip rates of Moodly's songs vs normal songs show if the interventions annoy you, and they feed the Markov skip weights and the taste score.</p>
+</section>
+
+<section class="panel sec" id="sec-spotify">
+  <div class="top"><h2><span class="dot" style="background:var(--ok)"></span>Spotify's 2026 API changes</h2><span class="tag">backend/spotify/client.py</span></div>
+  <ul class="tight">
+    <li><code>/playlists/{id}/tracks</code> became <code>/items</code>, and spotipy still uses the old path, so I call the new endpoints directly.</li>
+    <li><code>/me</code> may drop the <code>product</code> field. Fallback: a <code>403 PREMIUM_REQUIRED</code> on the first playback command means not Premium.</li>
+    <li>No artist genres, no popularity, max 10 search results per page. That's why languages come from lyrics and markers.</li>
+  </ul>
+</section>
+
+<!-- ============ PROCESS ============ -->
+<section class="panel sec" id="sec-process">
+  <div class="top"><h2><span class="dot" style="background:var(--accent)"></span>How you built it: spec-driven development</h2><span class="tag">SPEC.md.md · PLAN.md · MODIF.md · LOG.md</span></div>
+  <p class="what"><b>In one line:</b> I wrote down what I wanted first, checked the plan, then let the AI build it, and tested everything.</p>
+  <ul class="tight">
+    <li><b>SPEC</b> = what the app must do, with pass/fail checks.</li>
+    <li><b>PLAN</b> = how to build it, approved by me before any code.</li>
+    <li><b>Tests</b> = 261 automatic checks, plus real tests with Spotify.</li>
+    <li><b>MODIF</b> = a diary of every change (M1 to M33).</li>
+  </ul>
+  <div class="qs">
+    <details><summary>How is this different from vibe coding?</summary><div class="ans"><p>Vibe coding = ask the AI, accept whatever it writes. I wrote the rules first, checked the plan, and tested the result.</p></div></details>
+    <details><summary>Give one example where planning helped.</summary><div class="ans"><p>My spec needed Spotify's mood data, but Spotify had switched it off. The plan found this before coding and added backup sources.</p></div></details>
+    <details><summary>Are passing tests enough?</summary><div class="ans"><p>No. Some bugs only showed with real Spotify, so I also did live trials. Best one: mood gap 0.68 → 0.05 in 29 minutes.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ WEAK SPOTS ============ -->
+<section class="panel sec" id="sec-limits">
+  <div class="top"><h2><span class="dot" style="background:var(--rose)"></span>Weak spots they may push on</h2></div>
+  <p class="lead">Say these yourself before they find them. Admitting a limit and giving the next step sounds strong.</p>
+  <div class="qs">
+    <details><summary>Does it actually measure the user's mood?</summary><div class="ans"><p>No. It measures the mood <b>of the music</b> you choose, as a proxy. It assumes what you pick reflects how you feel. Real validation would need self-reports (e.g. a quick mood rating before and after) or a user study. That's the honest next step.</p></div></details>
+    <details><summary>It's slow. Why does a mood change take so long?</summary><div class="ans"><p>The mood is an average of about 20 songs, so it only moves as songs play or are removed. A full change can take hours in simulation. Faster options: a smaller window, more removals per cycle, or a recency-weighted average. Slow is partly the point (gradual, iso principle).</p></div></details>
+    <details><summary>What doesn't work yet?</summary><div class="ans"><p>5-user Spotify limit; about 25% of songs have unknown language; the Mac build is untested on a real Mac and has no screen warmth; podcasts are ignored; the session playlist is visible in your library; free APIs (Deezer, LRCLIB, iTunes, ReccoBeats) may rate-limit or disappear (all cached, failures skipped).</p></div></details>
+    <details><summary>Did AI write this? How much do you understand?</summary><div class="ans"><p>I built it with Claude Code using spec-driven development, which is the method from the course. I wrote and approved the spec and the plans, made the design calls (random inserts, waiting for the pool, Premium gate), ran the live trials, and reviewed each change. Then walk them through any part on this page.</p></div></details>
+  </div>
+</section>
+
+<!-- ============ NUMBERS ============ -->
+<section class="panel" id="numbers">
+  <span class="eyebrow">Numbers cheat sheet</span>
+  <div class="tbl"><table>
+    <tr><th>What</th><th>Value</th></tr>
+    <tr><td>Mood grid</td><td class="n">10 × 10, β = 6, γ = 20</td></tr>
+    <tr><td>Moods (valence, energy)</td><td class="n">Focused .50,.45 · Calm .60,.25 · Energized .80,.85 · Wind Down .40,.15</td></tr>
+    <tr><td>Cycle</td><td class="n">every ~90 s, or on song / target change</td></tr>
+    <tr><td>Window</td><td class="n">20 songs; refill if &lt; 8 ahead (2 songs per step)</td></tr>
+    <tr><td>Skip</td><td class="n">&lt; 80% played</td></tr>
+    <tr><td>Polling</td><td class="n">0.75 s playing · 2 s paused</td></tr>
+    <tr><td>Removal radius</td><td class="n">0.35 from both mood and target</td></tr>
+    <tr><td>Pool ready</td><td class="n">15 songs, max 10 min</td></tr>
+    <tr><td>Catalog fallback</td><td class="n">89,741 tracks</td></tr>
+    <tr><td>Screen</td><td class="n">100 K / min · 3500–6500 K</td></tr>
+    <tr><td>Best live trial</td><td class="n">gap 0.68 → 0.05 in 29 min</td></tr>
+    <tr><td>Tests</td><td class="n">261 (85 after Phase 1)</td></tr>
+  </table></div>
+</section>
+
+<section class="panel" id="demo">
+  <span class="eyebrow">If they ask for a demo</span>
+  <ul class="tight">
+    <li>Open <a href="https://github.com/msja1729/Moodly/releases" target="_blank" rel="noopener">github.com/msja1729/Moodly/releases</a> and show v0.4.0 with the Windows and Mac installers.</li>
+    <li>Have Spotify playing before you start. Open the tray, pick <b>Energized</b>, click <b>Start session</b>, choose “For you”.</li>
+    <li>Point at the mood map: white dot = your mood, tinted dot = target. Explain that it waits for the pool first.</li>
+    <li>Backup if Spotify fails: <code>python -m backend.daemon --mock</code> runs a scripted session with no account, sped up 30×.</li>
+  </ul>
+</section>
+
+</div>
+
+<script>
+(function(){
+  const KEY = "moodly-prep-known";
+  let known = {};
+  try { known = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { known = {}; }
+  const all = Array.from(document.querySelectorAll("details"));
+  const progress = document.getElementById("progress");
+
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(known)); } catch (e) {} }
+  function update(){
+    const n = all.filter(d => d.classList.contains("known")).length;
+    progress.textContent = n + " / " + all.length + " ready";
+  }
+  all.forEach((d, i) => {
+    const id = "q" + i;
+    const ans = d.querySelector(".ans");
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "know";
+    const set = on => { d.classList.toggle("known", on); b.textContent = on ? "✓ I can answer this" : "Mark: I can answer this"; };
+    set(!!known[id]);
+    b.addEventListener("click", () => { known[id] = !known[id]; if (!known[id]) delete known[id]; set(!!known[id]); save(); update(); });
+    ans.appendChild(b);
+  });
+  update();
+
+  document.getElementById("closeAll").addEventListener("click", () => all.forEach(d => d.open = false));
+  document.getElementById("randomQ").addEventListener("click", () => {
+    const pool = all.filter(d => !d.classList.contains("known"));
+    const list = pool.length ? pool : all;
+    const d = list[Math.floor(Math.random() * list.length)];
+    all.forEach(x => x.open = false);
+    d.scrollIntoView({block: "center"});
+    d.querySelector("summary").focus({preventScroll: true});
+  });
+})();
+</script>
+
+</html>
