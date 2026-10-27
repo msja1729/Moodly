@@ -122,7 +122,7 @@ ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 
 <section class="panel pitch" id="pitch">
   <span class="eyebrow">Learn this word for word · 45 seconds</span>
-  <blockquote>“Moodly is a desktop app that slowly steers your mood through your music. Every Spotify song is a point in a 2D mood space: <b>valence</b> (how positive it sounds) against <b>energy</b>. Your current mood is the average of what you're listening to. You pick a target mood (Focused, Calm, Energized or Wind Down). A <b>Markov chain</b> over that space picks the next small step toward the target. Moodly then finds songs at that step that also fit musically and match your taste and languages, and puts them into a private session playlist that plays without a gap. It also changes your VS Code theme and screen warmth. I built it spec-first with Claude Code: a written SPEC, a reviewed PLAN, tests for every acceptance criterion, and a change log for every modification.”</blockquote>
+  <blockquote>“Moodly is a desktop app that slowly steers your mood through your music. Every Spotify song is a point in a 2D mood space: <b>valence</b> (how positive it sounds) against <b>energy</b>. Your current mood is the average of what you're listening to. You pick a target mood (Focused, Calm, Energized or Wind Down). A <b>step planner</b> over that space picks the next small step toward the target. Moodly then finds songs at that step that also fit musically and match your taste and languages, and puts them into a private session playlist that plays without a gap. It also slowly changes your screen warmth. I built it spec-first with Claude Code: a written SPEC, a reviewed PLAN, tests for every acceptance criterion, and a change log for every modification.”</blockquote>
   <p class="lead">If they ask “why does it matter?”: it applies the <b>iso principle</b> from music therapy. You start where the listener is and change the music gradually, not with a sudden jump.</p>
 </section>
 
@@ -132,7 +132,7 @@ ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
     <h2>How the parts connect</h2>
   </div>
   <div class="map">
-  <svg viewBox="0 0 760 390" role="img" aria-label="Moodly architecture: Spotify feeds inference, mood and Markov chain, selection and the session playlist; tray UI talks to the daemon through config and state files.">
+  <svg viewBox="0 0 760 390" role="img" aria-label="Moodly architecture: Spotify feeds inference, mood and step planner, selection and the session playlist; tray UI talks to the daemon through config and state files.">
     <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0,0 L10,5 L0,10 z"/></marker></defs>
     <!-- arrows -->
     <path class="arrow" d="M85 82 V148" marker-end="url(#ah)"/>
@@ -151,7 +151,7 @@ ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
     <path class="arrow" d="M232 216 V288" marker-end="url(#ah)"/>
     <text class="lbl" x="238" y="275">plays, skips</text>
     <path class="arrow" d="M620 82 V100 H740 V380 H90 V352" marker-end="url(#ah)"/>
-    <text class="lbl" x="600" y="374">target mood → theme, kelvin</text>
+    <text class="lbl" x="600" y="374">target mood → kelvin</text>
 
     <a href="#sec-auth"><g class="box"><rect x="20" y="20" width="130" height="62" rx="10"/><text x="32" y="46">Accounts</text><text class="sub" x="32" y="66">PKCE · Premium</text></g></a>
     <a href="#sec-ui"><g class="box"><rect x="250" y="20" width="182" height="62" rx="10"/><text x="262" y="46">Tray sidebar (PyQt6)</text><text class="sub" x="262" y="66">mood tiles · sessions</text></g></a>
@@ -159,11 +159,11 @@ ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
 
     <a href="#sec-spotify"><g class="box"><rect x="20" y="150" width="130" height="66" rx="10"/><text x="32" y="177">Spotify</text><text class="sub" x="32" y="197">playback · queue</text></g></a>
     <a href="#sec-inference"><g class="box"><rect x="167" y="150" width="130" height="66" rx="10"/><text x="179" y="177">Inference</text><text class="sub" x="179" y="197">poll · skip · features</text></g></a>
-    <a href="#sec-markov"><g class="box"><rect x="314" y="150" width="130" height="66" rx="10"/><text x="326" y="177">Mood + Markov</text><text class="sub" x="326" y="197">next waypoint</text></g></a>
+    <a href="#sec-planner"><g class="box"><rect x="314" y="150" width="130" height="66" rx="10"/><text x="326" y="177">Mood + planner</text><text class="sub" x="326" y="197">next waypoint</text></g></a>
     <a href="#sec-select"><g class="box"><rect x="461" y="150" width="130" height="66" rx="10"/><text x="473" y="177">Selection</text><text class="sub" x="473" y="197">score · MMR · remove</text></g></a>
     <a href="#sec-playlist"><g class="box"><rect x="608" y="150" width="132" height="66" rx="10"/><text x="620" y="177">Session playlist</text><text class="sub" x="620" y="197">insert · resync</text></g></a>
 
-    <a href="#sec-actuators"><g class="box"><rect x="20" y="290" width="140" height="62" rx="10"/><text x="32" y="316">Themes + screen</text><text class="sub" x="32" y="336">JSONC · gamma ramp</text></g></a>
+    <a href="#sec-actuators"><g class="box"><rect x="20" y="290" width="140" height="62" rx="10"/><text x="32" y="316">Screen warmth</text><text class="sub" x="32" y="336">gamma ramp</text></g></a>
     <a href="#sec-feedback"><g class="box"><rect x="167" y="290" width="130" height="62" rx="10"/><text x="179" y="316">Feedback log</text><text class="sub" x="179" y="336">SQLite · skip rates</text></g></a>
     <a href="#sec-reco"><g class="box"><rect x="461" y="290" width="132" height="62" rx="10"/><text x="473" y="316">Recommender</text><text class="sub" x="473" y="336">taste · 2 languages</text></g></a>
   </svg>
@@ -171,10 +171,10 @@ ul.tight{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;m
   <p class="lead">Two processes: the <b>tray app</b> (what you see) and the <b>daemon</b> (all the logic, headless). They only talk through two JSON files.</p>
 </section>
 
-<!-- ============ 1 MOOD + MARKOV ============ -->
-<section class="panel sec" id="sec-markov">
-  <div class="top"><h2><span class="dot" style="background:var(--accent)"></span>Mood space and the Markov chain</h2><span class="tag">backend/mood_space.py · selection.py</span></div>
-  <p class="what"><b>What:</b> Mood is a point (valence, energy) in the unit square [0,1]². Valence and energy come from each song's audio features. The square is cut into a <b>10 × 10 grid</b>. Each cell is a state. From any cell, the chain may only move to a <b>neighbouring cell that is strictly closer to the target</b>. The target cell is absorbing (probability 1 of staying).</p>
+<!-- ============ 1 MOOD + STEP PLANNER ============ -->
+<section class="panel sec" id="sec-planner">
+  <div class="top"><h2><span class="dot" style="background:var(--accent)"></span>Mood space and the step planner</h2><span class="tag">backend/mood_space.py · selection.py</span></div>
+  <p class="what"><b>What:</b> Mood is a point (valence, energy) in the unit square [0,1]². Valence and energy come from each song's audio features. The square is cut into a <b>10 × 10 grid</b>. Each cell is a state. From any cell, the planner may only move to a <b>neighbouring cell that is strictly closer to the target</b>. The target cell is absorbing (probability 1 of staying).</p>
   <div class="formula">P[i → j] ∝ exp(−β · d(cⱼ, target))     pull toward the target   (β = 6)
          × exp(−γ · d(cᵢ, cⱼ)²)        penalty for big jumps     (γ = 20)
          × w_skip(direction)           learned from your skips
@@ -184,14 +184,14 @@ w_skip = 2(1 + completions) / (2 + completions + skips)   ← Beta(1,1) prior, u
   <ul class="tight">
     <li><b>Mood m</b>: the average of the last 3 songs you heard (not skipped), the song playing, and your own songs ahead (up to 20). Moodly's picks only count once they play.</li>
     <li><b>Heading h</b>: the average of the whole upcoming window, Moodly's picks included.</li>
-    <li><b>Waypoint w</b>: one Markov step from h toward the target t. New songs are searched near w.</li>
+    <li><b>Waypoint w</b>: one planner step from h toward the target t. New songs are searched near w.</li>
   </ul>
-  <p class="why"><b>Why a Markov chain?</b> The spec required it (“simple genre swapping is forbidden”). It also gives small, monotone steps that never move away from the target. β and γ are easy to tune, and the skip weight lets your behaviour reshape the path.</p>
+  <p class="why"><b>Why a step planner?</b> The spec forbids simple genre swapping. A probability-based planner gives small, monotone steps that never move away from the target. β and γ are easy to tune, and the skip weight lets your behaviour reshape the path.</p>
   <div class="qs">
     <details><summary>Why is the current mood an average of songs, not one song?</summary><div class="ans"><p>One song is noisy. A shuffle can throw in one sad song between happy ones. Averaging the recent and upcoming window gives a stable estimate. Moodly's own picks are left out until they actually play, so the app can't “cheat” by queueing songs and calling that progress.</p></div></details>
-    <details><summary>What do β and γ do? What happens if you make them bigger?</summary><div class="ans"><p>β is the pull toward the target. Bigger β means the chain prefers the neighbour closest to the target, so steps become almost deterministic. γ penalises long jumps (a diagonal step is longer than a straight one). Bigger γ means more straight, small steps and smoother transitions.</p></div></details>
-    <details><summary>Why only neighbours that are strictly closer to the target?</summary><div class="ans"><p>It guarantees progress. Every step reduces the distance, so the chain can never go backwards or loop. It always ends in the target cell, which is absorbing. On a grid every non-target cell has at least one closer neighbour, so no state is a dead end.</p></div></details>
-    <details><summary>How do skips change the chain?</summary><div class="ans"><p>For each of the 8 directions I count completions and skips of songs that moved in that direction. The weight is the Beta posterior mean 2(1+c)/(2+c+s). With no data it is 1, so nothing changes. If you keep skipping songs in a direction, that direction's probability falls.</p></div></details>
+    <details><summary>What do β and γ do? What happens if you make them bigger?</summary><div class="ans"><p>β is the pull toward the target. Bigger β means the planner prefers the neighbour closest to the target, so steps become almost deterministic. γ penalises long jumps (a diagonal step is longer than a straight one). Bigger γ means more straight, small steps and smoother transitions.</p></div></details>
+    <details><summary>Why only neighbours that are strictly closer to the target?</summary><div class="ans"><p>It guarantees progress. Every step reduces the distance, so the planner can never go backwards or loop. It always ends in the target cell, which is absorbing. On a grid every non-target cell has at least one closer neighbour, so no state is a dead end.</p></div></details>
+    <details><summary>How do skips change the planner?</summary><div class="ans"><p>For each of the 8 directions I count completions and skips of songs that moved in that direction. The weight is the Beta posterior mean 2(1+c)/(2+c+s). With no data it is 1, so nothing changes. If you keep skipping songs in a direction, that direction's probability falls.</p></div></details>
     <details><summary>Why separate the “mood” and the “heading”?</summary><div class="ans"><p>The mood is what you've actually heard. The heading is where the whole queue is going, including songs Moodly already added. If I only used the mood, every cycle would aim at the same step and add the same kind of song again. Using the heading makes each new pick go one step further, like a staircase.</p></div></details>
   </div>
 </section>
@@ -285,17 +285,16 @@ w_skip = 2(1 + completions) / (2 + completions + skips)   ← Beta(1,1) prior, u
 
 <!-- ============ 8 ACTUATORS ============ -->
 <section class="panel sec" id="sec-actuators">
-  <div class="top"><h2><span class="dot" style="background:var(--rose)"></span>Themes and screen warmth</h2><span class="tag">backend/actuators/workspace.py · display.py</span></div>
-  <p class="what"><b>What:</b> each mood has a VS Code theme, a Windows Terminal scheme and a Kelvin value (Energized 6500 K → Wind Down 3500 K). The screen moves <b>100 K per minute</b> using Win32 <code>SetDeviceGammaRamp</code>.</p>
+  <div class="top"><h2><span class="dot" style="background:var(--rose)"></span>Screen warmth</h2><span class="tag">backend/actuators/display.py</span></div>
+  <p class="what"><b>What:</b> each mood has a screen colour temperature in Kelvin (Energized 6500 K → Wind Down 3500 K). The screen moves <b>100 K per minute</b> using Win32 <code>SetDeviceGammaRamp</code>.</p>
   <div class="qs">
-    <details><summary>Why not just json.load and json.dump the VS Code settings?</summary><div class="ans"><p>VS Code's settings are JSONC: comments and trailing commas. A normal round trip deletes the user's comments. I edit only the one value in the original text (a surgical edit), then write atomically. It's tested with comments, trailing commas, BOM and CRLF.</p></div></details>
     <details><summary>Why can't Wind Down reach 3500 K on some PCs?</summary><div class="ans"><p>Windows rejects gamma ramps warmer than about 3400–4000 K by default. The app detects that and stops at the warmest accepted value. A registry setting unlocks the full range (in the README).</p></div></details>
   </div>
 </section>
 
 <section class="panel sec" id="sec-feedback">
   <div class="top"><h2><span class="dot" style="background:var(--violet)"></span>Feedback log</h2><span class="tag">backend/feedback.py</span></div>
-  <p class="what"><b>What:</b> every song change is logged to SQLite: time, mood vector, intervention type, skipped or not. Skip rates of Moodly's songs vs normal songs show if the interventions annoy you, and they feed the Markov skip weights and the taste score.</p>
+  <p class="what"><b>What:</b> every song change is logged to SQLite: time, mood vector, intervention type, skipped or not. Skip rates of Moodly's songs vs normal songs show if the interventions annoy you, and they feed the planner's skip weights and the taste score.</p>
 </section>
 
 <section class="panel sec" id="sec-spotify">
